@@ -1,8 +1,21 @@
 # Finança Simples para Windows
 
-Aplicativo Tauri 2 que abre a versão privada e sempre atualizada do Finança Simples. O banco de dados, o Open Finance, as cotações e os recursos de IA continuam no backend hospedado; por isso, evoluções nessas áreas chegam ao aplicativo sem reinstalação.
+O **Finança Simples** é um aplicativo de controle financeiro para Windows construído com Tauri 2 e banco SQLite local. Ele é uma aplicação independente do sistema **Seja Doce** e não contém módulos de produtos, precificação, estoque, funcionários ou folha.
 
-O invólucro Windows também possui um atualizador nativo. Ele verifica um lançamento assinado 20 segundos após abrir e novamente a cada seis horas. Quando encontra uma versão superior, baixa, valida a assinatura, instala e reinicia o aplicativo.
+## Escopo do Finança Simples
+
+- **Dashboard**: saldo atual, saldo previsto, receitas realizadas, receitas a receber, despesas realizadas, despesas a pagar, resultado do período, movimento diário, despesas por categoria e comprometimento de cartão em relação à renda média parametrizada.
+- **Lançamentos**: receitas e despesas, realizado/pendente, conta, categoria, forma de pagamento, vencimento, edição, baixa e exclusão.
+- **Importação de fatura**: importação local de CSV com data, descrição e valor, sem enviar o arquivo para serviços externos.
+- **Open Finance**: cadastro manual de contas funciona offline. A conexão automática somente será habilitada quando existir backend seguro; credenciais nunca devem ser embarcadas no executável.
+- **Investimentos**: cadastro de posições, quantidade, preço médio, preço atual e resultado. Cotações automáticas somente serão ativadas quando o serviço online estiver integrado.
+- **Parametrização**: saldo inicial, renda média mensal, limite de cartões, conta padrão, integridade do banco, backup SQLite e exportação JSON.
+
+## Armazenamento e funcionamento offline
+
+No Windows, os dados ficam em SQLite no diretório de dados do aplicativo. O banco usa WAL, `busy_timeout` e verificação `PRAGMA quick_check`. O Finança Simples não depende de um site privado para abrir e continua funcionando sem internet para suas funções locais.
+
+A versão 1.2.0 não apaga automaticamente registros antigos de módulos que foram incluídos por engano em builds anteriores. Esses tipos deixam de ser aceitos e não aparecem na interface, evitando perda acidental de dados.
 
 ## Desenvolvimento
 
@@ -18,23 +31,36 @@ npm install
 npm run dev
 ```
 
-## Primeiro canal de atualização
-
-1. Crie a chave do atualizador e mantenha a chave privada fora do repositório:
+Para gerar o instalador NSIS:
 
 ```powershell
-npm install
-npm run signer:generate -- --write-keys "$env:USERPROFILE\.tauri\financa-simples.key"
+npm ci
+npm run build -- --config src-tauri/tauri.unsigned.conf.json --bundles nsis
 ```
 
-2. Mantenha este repositório público para que o aplicativo consiga consultar `latest.json` sem armazenar credenciais do GitHub no computador. O código financeiro e o banco continuam privados no Sites.
+## Validação automática
 
-3. Cadastre no repositório de distribuição:
+O workflow Windows executa:
 
-- `TAURI_SIGNING_PRIVATE_KEY`: conteúdo da chave privada.
-- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: senha da chave.
-- `TAURI_UPDATER_PUBLIC_KEY`: conteúdo da chave pública.
+1. validação sintática do frontend com `node --check`;
+2. trava de escopo para impedir reentrada de módulos da Seja Doce;
+3. testes Rust do banco e dos tipos permitidos;
+4. `cargo check`;
+5. compilação NSIS;
+6. smoke test abrindo o executável por 15 segundos;
+7. publicação do instalador somente após os testes passarem.
 
-4. Crie uma tag `desktop-v1.0.0`. O fluxo de publicação gera o instalador `.exe`, o `.msi`, os pacotes assinados e `latest.json`.
+## Segurança
 
-Nunca coloque credenciais bancárias, Pluggy, IA ou a chave privada no código. O executável contém somente a chave pública necessária para validar atualizações.
+Nunca coloque no código, no Tauri ou no GitHub público:
+
+- Client Secret ou API keys do Pluggy/Open Finance;
+- chaves de IA;
+- senhas bancárias;
+- chave privada de assinatura do atualizador.
+
+Credenciais que tenham sido expostas anteriormente devem ser rotacionadas antes de qualquer integração de produção.
+
+## Atualizações automáticas
+
+A atualização automática assinada do executável será reativada somente com um canal de assinatura configurado e testado. Até lá, builds de manutenção são distribuídas como novos instaladores para não repetir a falha de inicialização causada por configuração incompleta do updater.
