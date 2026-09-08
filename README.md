@@ -14,7 +14,6 @@ Pré-requisitos no Windows:
 - WebView2 Runtime
 
 ```powershell
-cd desktop
 npm install
 npm run dev
 ```
@@ -24,12 +23,11 @@ npm run dev
 1. Crie a chave do atualizador e mantenha a chave privada fora do repositório:
 
 ```powershell
-cd desktop
 npm install
 npm run signer:generate -- --write-keys "$env:USERPROFILE\.tauri\financa-simples.key"
 ```
 
-2. Publique somente esta pasta `desktop` em um repositório público de distribuição. O código financeiro e o banco continuam privados no Sites.
+2. Mantenha este repositório público para que o aplicativo consiga consultar `latest.json` sem armazenar credenciais do GitHub no computador. O código financeiro e o banco continuam privados no Sites.
 
 3. Cadastre no repositório de distribuição:
 

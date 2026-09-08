@@ -1,0 +1,71 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Finança Simples",
+  "version": "1.0.0",
+  "identifier": "br.com.financasimples.desktop",
+  "build": {
+    "frontendDist": "../desktop-dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Finança Simples",
+        "url": "https://financa-simples-gestao.henrickaraujo2009.chatgpt.site",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1050,
+        "minHeight": 680,
+        "center": true,
+        "resizable": true,
+        "maximizable": true,
+        "minimizable": true,
+        "theme": "Dark",
+        "backgroundColor": "#07120f",
+        "devtools": false,
+        "dragDropEnabled": true,
+        "zoomHotkeysEnabled": true
+      }
+    ],
+    "security": {
+      "capabilities": [],
+      "csp": null,
+      "freezePrototype": true
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "msi"],
+    "createUpdaterArtifacts": true,
+    "category": "Finance",
+    "shortDescription": "Gestão financeira pessoal e investimentos",
+    "longDescription": "Finança Simples para Windows, com lançamentos, dashboard, importação de faturas, investimentos e Open Finance.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "installerIcon": "icons/icon.ico",
+        "languages": ["PortugueseBR"]
+      },
+      "wix": {
+        "language": "pt-BR"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}
