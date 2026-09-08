@@ -31,8 +31,6 @@ concurrency:
 jobs:
   windows:
     runs-on: windows-latest
-    env:
-      FINANCA_SIMPLES_WEB_URL: https://financa-simples-gestao.henrickaraujo2009.chatgpt.site
 
     steps:
       - name: Baixar o código
@@ -56,22 +54,30 @@ jobs:
       - name: Instalar dependências
         run: npm ci
 
-      - name: Validar endpoint do sistema online
+      - name: Validar aplicação embarcada
         shell: pwsh
         run: |
-          $status = curl.exe -L --max-time 25 -o NUL -s -w "%{http_code}" $env:FINANCA_SIMPLES_WEB_URL
-          if ($LASTEXITCODE -ne 0) {
-            throw "Não foi possível alcançar o endpoint do sistema: $env:FINANCA_SIMPLES_WEB_URL"
+          $required = @(
+            "desktop-dist/index.html",
+            "desktop-dist/app.js",
+            "desktop-dist/styles.css"
+          )
+
+          foreach ($path in $required) {
+            if (-not (Test-Path $path)) {
+              throw "Arquivo obrigatório do modo offline não encontrado: $path"
+            }
           }
-          $code = [int]$status
-          if (($code -lt 200 -or $code -ge 400) -and $code -ne 401 -and $code -ne 403) {
-            throw "Endpoint do sistema retornou HTTP $code."
+
+          $index = Get-Content "desktop-dist/index.html" -Raw
+          if ($index -match "window.location.replace") {
+            throw "O desktop voltou a depender de redirecionamento remoto."
           }
-          if ($code -eq 401 -or $code -eq 403) {
-            Write-Host "Endpoint privado alcançável (HTTP $code)."
-          } else {
-            Write-Host "Sistema online acessível (HTTP $code)."
-          }
+
+          Write-Host "Frontend local presente e sem redirecionamento obrigatório."
+
+      - name: Verificar núcleo Rust
+        run: cargo check --manifest-path src-tauri/Cargo.toml
 
       - name: Compilar instalador NSIS
         run: npm run build -- --config src-tauri/tauri.unsigned.conf.json --bundles nsis
@@ -89,7 +95,7 @@ jobs:
           }
 
           Stop-Process -Id $process.Id -Force
-          Write-Host "Smoke test aprovado: aplicativo permaneceu aberto por 12 segundos."
+          Write-Host "Smoke test aprovado: núcleo offline permaneceu aberto por 12 segundos."
 
       - name: Publicar instalador como artefato
         uses: actions/upload-artifact@v4
@@ -120,7 +126,7 @@ jobs:
             gh release create desktop-preview $installer.FullName `
               --prerelease `
               --title "Finança Simples para Windows" `
-              --notes "Build 1.0.1 validado: sem janela de CMD e com teste automático de inicialização."
+              --notes "Build offline-first validado: frontend embarcado, SQLite local e smoke test automático."
           } else {
             $oldAssets = gh release view desktop-preview --json assets --jq '.assets[].name'
             foreach ($asset in $oldAssets) {
@@ -131,5 +137,5 @@ jobs:
             gh release upload desktop-preview $installer.FullName
             gh release edit desktop-preview `
               --title "Finança Simples para Windows" `
-              --notes "Build 1.0.1 validado: sem janela de CMD e com teste automático de inicialização."
+              --notes "Build offline-first validado: frontend embarcado, SQLite local e smoke test automático."
           }
