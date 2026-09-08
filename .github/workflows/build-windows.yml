@@ -33,7 +33,6 @@ jobs:
     runs-on: windows-latest
     env:
       FINANCA_SIMPLES_WEB_URL: https://financa-simples-gestao.henrickaraujo2009.chatgpt.site
-      RUST_BACKTRACE: full
 
     steps:
       - name: Baixar o código
@@ -77,21 +76,15 @@ jobs:
       - name: Compilar instalador NSIS
         run: npm run build -- --config src-tauri/tauri.unsigned.conf.json --bundles nsis
 
-      - name: Smoke test diagnóstico do executável
+      - name: Smoke test do executável
         shell: pwsh
         run: |
           $exe = Resolve-Path "src-tauri/target/release/financa-simples-desktop.exe"
-          $stdout = Join-Path $env:RUNNER_TEMP "financa-stdout.log"
-          $stderr = Join-Path $env:RUNNER_TEMP "financa-stderr.log"
-          $process = Start-Process -FilePath $exe -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          $process = Start-Process -FilePath $exe -PassThru
           Start-Sleep -Seconds 12
           $process.Refresh()
 
           if ($process.HasExited) {
-            Write-Host "===== STDOUT ====="
-            if (Test-Path $stdout) { Get-Content $stdout -Raw }
-            Write-Host "===== STDERR ====="
-            if (Test-Path $stderr) { Get-Content $stderr -Raw }
             throw "O Finança Simples encerrou durante a inicialização. ExitCode=$($process.ExitCode)"
           }
 
@@ -127,7 +120,7 @@ jobs:
             gh release create desktop-preview $installer.FullName `
               --prerelease `
               --title "Finança Simples para Windows" `
-              --notes "Build validado do Finança Simples para Windows. Inclui teste automático de inicialização."
+              --notes "Build 1.0.1 validado: sem janela de CMD e com teste automático de inicialização."
           } else {
             $oldAssets = gh release view desktop-preview --json assets --jq '.assets[].name'
             foreach ($asset in $oldAssets) {
@@ -138,5 +131,5 @@ jobs:
             gh release upload desktop-preview $installer.FullName
             gh release edit desktop-preview `
               --title "Finança Simples para Windows" `
-              --notes "Build validado do Finança Simples para Windows. Inclui teste automático de inicialização."
+              --notes "Build 1.0.1 validado: sem janela de CMD e com teste automático de inicialização."
           }
