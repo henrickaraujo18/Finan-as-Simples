@@ -33,6 +33,7 @@ jobs:
     runs-on: windows-latest
     env:
       FINANCA_SIMPLES_WEB_URL: https://financa-simples-gestao.henrickaraujo2009.chatgpt.site
+      RUST_BACKTRACE: full
 
     steps:
       - name: Baixar o código
@@ -68,7 +69,7 @@ jobs:
             throw "Endpoint do sistema retornou HTTP $code."
           }
           if ($code -eq 401 -or $code -eq 403) {
-            Write-Host "Endpoint privado alcançável (HTTP $code); autenticação será feita pelo usuário no aplicativo."
+            Write-Host "Endpoint privado alcançável (HTTP $code)."
           } else {
             Write-Host "Sistema online acessível (HTTP $code)."
           }
@@ -76,15 +77,21 @@ jobs:
       - name: Compilar instalador NSIS
         run: npm run build -- --config src-tauri/tauri.unsigned.conf.json --bundles nsis
 
-      - name: Smoke test do executável
+      - name: Smoke test diagnóstico do executável
         shell: pwsh
         run: |
           $exe = Resolve-Path "src-tauri/target/release/financa-simples-desktop.exe"
-          $process = Start-Process -FilePath $exe -PassThru
+          $stdout = Join-Path $env:RUNNER_TEMP "financa-stdout.log"
+          $stderr = Join-Path $env:RUNNER_TEMP "financa-stderr.log"
+          $process = Start-Process -FilePath $exe -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
           Start-Sleep -Seconds 12
           $process.Refresh()
 
           if ($process.HasExited) {
+            Write-Host "===== STDOUT ====="
+            if (Test-Path $stdout) { Get-Content $stdout -Raw }
+            Write-Host "===== STDERR ====="
+            if (Test-Path $stderr) { Get-Content $stderr -Raw }
             throw "O Finança Simples encerrou durante a inicialização. ExitCode=$($process.ExitCode)"
           }
 
