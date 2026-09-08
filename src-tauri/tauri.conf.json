@@ -7,6 +7,7 @@
     "frontendDist": "../desktop-dist"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "label": "main",
@@ -38,8 +39,8 @@
     "targets": ["nsis", "msi"],
     "createUpdaterArtifacts": false,
     "category": "Finance",
-    "shortDescription": "Gestão financeira pessoal e investimentos",
-    "longDescription": "Finança Simples para Windows, com lançamentos, dashboard, importação de faturas, investimentos e Open Finance.",
+    "shortDescription": "Gestão financeira offline-first",
+    "longDescription": "Finança Simples para Windows com núcleo financeiro local, banco SQLite, fila de sincronização e integrações online progressivas.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
