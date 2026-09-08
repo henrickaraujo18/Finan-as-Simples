@@ -22,6 +22,8 @@ concurrency:
 jobs:
   windows:
     runs-on: windows-latest
+    env:
+      FINANCA_SIMPLES_WEB_URL: https://financa-simples-gestao.henrickaraujo2009.chatgpt.site
 
     steps:
       - name: Baixar o código
@@ -45,8 +47,36 @@ jobs:
       - name: Instalar dependências
         run: npm ci
 
+      - name: Validar sistema online
+        shell: pwsh
+        run: |
+          $status = curl.exe -L --max-time 25 -o NUL -s -w "%{http_code}" $env:FINANCA_SIMPLES_WEB_URL
+          if ($LASTEXITCODE -ne 0) {
+            throw "Não foi possível acessar o sistema online: $env:FINANCA_SIMPLES_WEB_URL"
+          }
+          $code = [int]$status
+          if ($code -lt 200 -or $code -ge 400) {
+            throw "Sistema online retornou HTTP $code."
+          }
+          Write-Host "Sistema online acessível (HTTP $code)."
+
       - name: Compilar instalador NSIS
         run: npm run build -- --config src-tauri/tauri.unsigned.conf.json --bundles nsis
+
+      - name: Smoke test do executável
+        shell: pwsh
+        run: |
+          $exe = Resolve-Path "src-tauri/target/release/financa-simples-desktop.exe"
+          $process = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 12
+          $process.Refresh()
+
+          if ($process.HasExited) {
+            throw "O Finança Simples encerrou durante a inicialização. ExitCode=$($process.ExitCode)"
+          }
+
+          Stop-Process -Id $process.Id -Force
+          Write-Host "Smoke test aprovado: aplicativo permaneceu aberto por 12 segundos."
 
       - name: Publicar instalador como artefato
         uses: actions/upload-artifact@v4
@@ -76,7 +106,16 @@ jobs:
             gh release create desktop-preview $installer.FullName `
               --prerelease `
               --title "Finança Simples para Windows" `
-              --notes "Build instalável para Windows. O canal assinado de atualização automática será ativado nas releases estáveis."
+              --notes "Build validado do Finança Simples para Windows. Inclui teste automático de inicialização."
           } else {
-            gh release upload desktop-preview $installer.FullName --clobber
+            $oldAssets = gh release view desktop-preview --json assets --jq '.assets[].name'
+            foreach ($asset in $oldAssets) {
+              if ($asset -like "*.exe") {
+                gh release delete-asset desktop-preview $asset -y
+              }
+            }
+            gh release upload desktop-preview $installer.FullName
+            gh release edit desktop-preview `
+              --title "Finança Simples para Windows" `
+              --notes "Build validado do Finança Simples para Windows. Inclui teste automático de inicialização."
           }
