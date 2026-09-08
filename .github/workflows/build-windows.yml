@@ -56,18 +56,22 @@ jobs:
       - name: Instalar dependências
         run: npm ci
 
-      - name: Validar sistema online
+      - name: Validar endpoint do sistema online
         shell: pwsh
         run: |
           $status = curl.exe -L --max-time 25 -o NUL -s -w "%{http_code}" $env:FINANCA_SIMPLES_WEB_URL
           if ($LASTEXITCODE -ne 0) {
-            throw "Não foi possível acessar o sistema online: $env:FINANCA_SIMPLES_WEB_URL"
+            throw "Não foi possível alcançar o endpoint do sistema: $env:FINANCA_SIMPLES_WEB_URL"
           }
           $code = [int]$status
-          if ($code -lt 200 -or $code -ge 400) {
-            throw "Sistema online retornou HTTP $code."
+          if (($code -lt 200 -or $code -ge 400) -and $code -ne 401 -and $code -ne 403) {
+            throw "Endpoint do sistema retornou HTTP $code."
           }
-          Write-Host "Sistema online acessível (HTTP $code)."
+          if ($code -eq 401 -or $code -eq 403) {
+            Write-Host "Endpoint privado alcançável (HTTP $code); autenticação será feita pelo usuário no aplicativo."
+          } else {
+            Write-Host "Sistema online acessível (HTTP $code)."
+          }
 
       - name: Compilar instalador NSIS
         run: npm run build -- --config src-tauri/tauri.unsigned.conf.json --bundles nsis
