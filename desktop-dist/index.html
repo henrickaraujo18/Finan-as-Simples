@@ -3,8 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0a1512" />
     <meta name="color-scheme" content="dark" />
     <title>Finança Simples</title>
+    <link rel="manifest" href="manifest.webmanifest" />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
@@ -12,157 +14,33 @@
       <aside class="sidebar">
         <div class="brand">
           <div class="brand-mark">FS</div>
-          <div class="brand-copy">
-            <strong>Finança Simples</strong>
-            <small>Desktop offline-first</small>
-          </div>
+          <div><strong>Finança Simples</strong><small>Sistema multiplataforma</small></div>
         </div>
-
         <nav class="nav" aria-label="Navegação principal">
-          <button class="active" type="button"><span>Visão geral</span></button>
-          <button type="button" disabled title="Módulo em migração"><span>Lançamentos</span></button>
-          <button type="button" disabled title="Módulo em migração"><span>Contas e bancos</span></button>
-          <button type="button" disabled title="Módulo em migração"><span>Orçamentos</span></button>
-          <button type="button" disabled title="Módulo em migração"><span>Relatórios</span></button>
-          <button type="button" disabled title="Requer conexão"><span>Open Finance</span></button>
-          <button type="button" disabled title="Requer conexão"><span>Agente IA</span></button>
+          <button data-page="dashboard" class="active"><span>Visão geral</span></button>
+          <button data-page="finance"><span>Financeiro</span></button>
+          <button data-page="quotes"><span>Orçamentos</span></button>
+          <button data-page="products"><span>Produtos & Precificação</span></button>
+          <button data-page="inventory"><span>Estoque</span></button>
+          <button data-page="employees"><span>Funcionários</span></button>
+          <button data-page="reports"><span>Relatórios & Análises</span></button>
+          <button data-page="integrations"><span>Integrações</span></button>
+          <button data-page="settings"><span>Configurações</span></button>
         </nav>
-
         <div class="sidebar-foot">
-          <div class="status-pill">
-            <span id="connectionDot" class="dot"></span>
-            <span class="copy" id="connectionLabel">Verificando conexão</span>
-          </div>
-          <div class="status-pill">
-            <span class="copy" id="storageLabel">Banco local</span>
-          </div>
+          <span id="platformBadge" class="side-badge">—</span>
+          <small id="storageLabel">Inicializando armazenamento...</small>
         </div>
       </aside>
 
-      <main>
+      <main class="main-area">
         <header class="topbar">
-          <h1>Gestão financeira</h1>
-          <div class="topbar-right">
-            <span id="connectionBadge" class="badge">Verificando...</span>
-            <button id="refreshDashboard" class="secondary" type="button">Atualizar</button>
-          </div>
+          <div><small>Finança Simples</small><h1 id="pageTitle">Visão geral</h1></div>
+          <div class="topbar-actions"><span id="connectionBadge" class="status-badge">Verificando...</span></div>
         </header>
-
-        <section class="content">
-          <div id="fatalError" class="offline-banner visible" hidden></div>
-          <div id="offlineBanner" class="offline-banner">
-            Você está sem internet. Lançamentos, saldos e histórico continuam disponíveis; serviços externos serão retomados quando a conexão voltar.
-          </div>
-
-          <div class="hero">
-            <div>
-              <h2>Seu financeiro continua funcionando offline</h2>
-              <p>Os dados essenciais ficam neste computador e entram numa fila segura para sincronização posterior.</p>
-            </div>
-            <button id="newEntry" class="primary" type="button">Novo lançamento</button>
-          </div>
-
-          <section class="kpis" aria-label="Indicadores financeiros">
-            <article class="card">
-              <div class="label">Saldo local</div>
-              <div id="balance" class="value">R$ 0,00</div>
-              <div class="hint">calculado diretamente no SQLite</div>
-            </article>
-            <article class="card">
-              <div class="label">Receitas no mês</div>
-              <div id="incomeMonth" class="value">R$ 0,00</div>
-              <div class="hint">funciona sem internet</div>
-            </article>
-            <article class="card">
-              <div class="label">Despesas no mês</div>
-              <div id="expenseMonth" class="value">R$ 0,00</div>
-              <div class="hint">funciona sem internet</div>
-            </article>
-            <article class="card">
-              <div class="label">Fila de sincronização</div>
-              <div id="pendingSync" class="value">0</div>
-              <div id="pendingSyncHint" class="hint">alterações pendentes</div>
-            </article>
-          </section>
-
-          <section class="grid">
-            <div class="panel">
-              <div class="panel-head">
-                <h3>Últimos lançamentos</h3>
-              </div>
-              <div class="panel-body">
-                <div id="transactionList" class="transaction-list">
-                  <div class="empty">Carregando banco local...</div>
-                </div>
-              </div>
-            </div>
-
-            <div id="entryPanel" class="panel">
-              <div class="panel-head">
-                <h3>Novo lançamento local</h3>
-              </div>
-              <div class="panel-body">
-                <form id="transactionForm" class="form">
-                  <div class="field">
-                    <label for="kind">Tipo</label>
-                    <select id="kind" required>
-                      <option value="income">Receita</option>
-                      <option value="expense">Despesa</option>
-                    </select>
-                  </div>
-                  <div class="field">
-                    <label for="description">Descrição</label>
-                    <input id="description" autocomplete="off" maxlength="160" placeholder="Ex.: Venda, aluguel, fornecedor..." required />
-                  </div>
-                  <div class="form-row">
-                    <div class="field">
-                      <label for="amount">Valor</label>
-                      <input id="amount" inputmode="decimal" placeholder="0,00" required />
-                    </div>
-                    <div class="field">
-                      <label for="occurredAt">Data</label>
-                      <input id="occurredAt" type="date" required />
-                    </div>
-                  </div>
-                  <button id="saveTransaction" class="primary" type="submit">Salvar no computador</button>
-                  <div id="formMessage" class="form-message"></div>
-                </form>
-              </div>
-            </div>
-          </section>
-
-          <section class="grid">
-            <div class="panel">
-              <div class="panel-head"><h3>Serviços que dependem da internet</h3></div>
-              <div class="panel-body service-list">
-                <div class="service">
-                  <div><strong>Open Finance / Pluggy</strong><small>Sincronização bancária e novas transações.</small></div>
-                  <span class="service-tag" data-online-service>offline</span>
-                </div>
-                <div class="service">
-                  <div><strong>Cotações</strong><small>Última cotação conhecida ficará em cache local.</small></div>
-                  <span class="service-tag" data-online-service>offline</span>
-                </div>
-                <div class="service">
-                  <div><strong>Agente IA</strong><small>Histórico local permanece; novas respostas exigem conexão.</small></div>
-                  <span class="service-tag" data-online-service>offline</span>
-                </div>
-              </div>
-            </div>
-
-            <div class="panel">
-              <div class="panel-head"><h3>Modo offline-first</h3></div>
-              <div class="panel-body">
-                <p style="margin-top:0;color:#a9c0b8;line-height:1.6;font-size:.88rem">
-                  O executável não depende mais do site para iniciar. O núcleo financeiro é local; quando houver servidor de sincronização configurado, a fila enviará as alterações e receberá atualizações sem bloquear o uso offline.
-                </p>
-              </div>
-            </div>
-          </section>
-        </section>
+        <div id="view" class="content"><section class="loading">Carregando o sistema...</section></div>
       </main>
     </div>
-
     <script src="app.js"></script>
   </body>
 </html>

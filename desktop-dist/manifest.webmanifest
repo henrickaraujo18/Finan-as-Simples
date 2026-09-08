@@ -1,0 +1,11 @@
+{
+  "name": "Finança Simples",
+  "short_name": "Finança Simples",
+  "description": "Gestão financeira multiplataforma e offline-first",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#07100d",
+  "theme_color": "#0a1512",
+  "lang": "pt-BR"
+}
