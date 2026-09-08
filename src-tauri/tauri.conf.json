@@ -36,7 +36,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis", "msi"],
-    "createUpdaterArtifacts": true,
+    "createUpdaterArtifacts": false,
     "category": "Finance",
     "shortDescription": "Gestão financeira pessoal e investimentos",
     "longDescription": "Finança Simples para Windows, com lançamentos, dashboard, importação de faturas, investimentos e Open Finance.",
@@ -58,13 +58,6 @@
       },
       "wix": {
         "language": "pt-BR"
-      }
-    }
-  },
-  "plugins": {
-    "updater": {
-      "windows": {
-        "installMode": "passive"
       }
     }
   }
