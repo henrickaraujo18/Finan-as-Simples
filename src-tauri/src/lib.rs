@@ -233,10 +233,6 @@ fn upsert_entity(db: State<'_, LocalDb>, input: EntityInput) -> Result<EntityRow
 
     transaction.commit().map_err(|error| error.to_string())?;
 
-    let connection = db
-        .connection
-        .lock()
-        .map_err(|_| "banco local indisponível".to_string())?;
     connection
         .query_row(
             "SELECT id, entity_type, data_json, version, sync_state, created_at, updated_at
