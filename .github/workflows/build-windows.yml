@@ -11,6 +11,15 @@ on:
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/build-windows.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "src-tauri/**"
+      - "desktop-dist/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/build-windows.yml"
 
 permissions:
   contents: write
@@ -89,6 +98,7 @@ jobs:
             src-tauri/target/release/financa-simples-desktop.exe
 
       - name: Publicar pré-release para download direto
+        if: github.event_name != 'pull_request'
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
