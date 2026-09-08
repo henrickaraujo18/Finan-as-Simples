@@ -1,596 +1,124 @@
-const tauriInvoke = window.__TAURI__?.core?.invoke;
-
-const ENTITY_TYPES = [
-  "transactions",
-  "quotes",
-  "products",
-  "inventory",
-  "employees",
-  "settings",
-  "customers",
-  "suppliers",
-];
-
-const defaults = {
-  companyName: "Minha empresa",
-  openingBalanceCents: 0,
-  taxRegime: "simples",
-  effectiveTaxRate: 6,
-  presumedTaxRate: 11.33,
-  realIncomeTaxRate: 34,
-  payrollBurdenRate: 28.8,
-  fixedCostRate: 10,
-  desiredMargin: 20,
-};
-
-const state = {
-  page: "dashboard",
-  online: navigator.onLine,
-  runtime: null,
-  data: Object.fromEntries(ENTITY_TYPES.map((type) => [type, []])),
-  settings: { ...defaults },
-  reportMonth: new Date().toISOString().slice(0, 7),
-};
-
-const el = (id) => document.getElementById(id);
-
-function uuid() {
-  return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+const invoke=window.__TAURI__?.core?.invoke;
+const TYPES=["transactions","accounts","investments","settings"];
+const PAYS={pix:"PIX",transfer:"Transferência",debit_card:"Débito",credit_card:"Crédito",boleto:"Boleto",cash:"Dinheiro",other:"Outro"};
+const D={profileName:"Meu financeiro",openingBalanceCents:0,averageMonthlyIncomeCents:0,creditCardLimitCents:0,defaultAccount:"",currency:"BRL"};
+const S={page:"dashboard",month:new Date().toISOString().slice(0,7),runtime:null,data:Object.fromEntries(TYPES.map(x=>[x,[]])),settings:{...D},edit:{transactions:null,accounts:null,investments:null}};
+const $=id=>document.getElementById(id);
+const esc=v=>String(v??"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");
+const money=c=>new Intl.NumberFormat("pt-BR",{style:"currency",currency:"BRL"}).format(Number(c||0)/100);
+const inputMoney=c=>(Number(c||0)/100).toFixed(2).replace(".",",");
+const parseMoney=v=>{let s=String(v??"").trim().replace(/\s/g,"").replace(/R\$/gi,"");if(!s)return 0;s=s.includes(",")?s.replace(/\./g,"").replace(",","."):s;let n=Number(s);return Number.isFinite(n)?Math.round(n*100):0};
+const pct=n=>`${Number(n||0).toFixed(1)}%`;
+const today=()=>{let d=new Date(),l=new Date(d.getTime()-d.getTimezoneOffset()*60000);return l.toISOString().slice(0,10)};
+const monthOf=d=>String(d||"").slice(0,7);
+const row=r=>({id:r.id,...(r.data||{}),_updatedAt:r.updatedAt});
+async function list(t){return(await invoke("list_entities",{entityType:t})).map(row)}
+async function save(t,data,id=null){return row(await invoke("upsert_entity",{input:{entityType:t,id,data}}))}
+async function remove(t,id){return invoke("delete_entity",{entityType:t,id})}
+async function load(){for(const t of TYPES)S.data[t]=await list(t);S.settings={...D,...(S.data.settings[0]||{})}}
+const tx=()=>S.data.transactions||[], ac=()=>S.data.accounts||[], inv=()=>S.data.investments||[];
+function metrics(){
+ const r=tx().filter(x=>monthOf(x.date)===S.month);
+ const sum=(kind,status)=>r.filter(x=>x.kind===kind&&x.status===status).reduce((a,x)=>a+Number(x.amountCents||0),0);
+ const ip=sum("income","paid"),ipp=sum("income","pending"),ep=sum("expense","paid"),epp=sum("expense","pending");
+ const card=r.filter(x=>x.kind==="expense"&&x.paymentMethod==="credit_card").reduce((a,x)=>a+Number(x.amountCents||0),0);
+ const income=Number(S.settings.averageMonthlyIncomeCents||0);
+ return{r,ip,ipp,ep,epp,real:ip-ep,forecast:ip+ipp-ep-epp,card,commit:income?card/income*100:0}
 }
-
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
+function currentBalance(){return Number(S.settings.openingBalanceCents||0)+tx().filter(x=>x.status==="paid").reduce((a,x)=>a+(x.kind==="income"?1:-1)*Number(x.amountCents||0),0)}
+function forecastBalance(){return Number(S.settings.openingBalanceCents||0)+tx().reduce((a,x)=>a+(x.kind==="income"?1:-1)*Number(x.amountCents||0),0)}
+function invMetrics(){let cost=0,now=0;for(const i of inv()){cost+=Math.round(Number(i.quantity||0)*Number(i.averagePriceCents||0));now+=Math.round(Number(i.quantity||0)*Number(i.currentPriceCents||0))}return{cost,now,gain:now-cost}}
+function k(l,v,h=""){return`<article class="kpi"><span>${esc(l)}</span><strong>${esc(v)}</strong><small>${esc(h)}</small></article>`}
+function title(){return{dashboard:"Dashboard",transactions:"Lançamentos",openfinance:"Open Finance",investments:"Investimentos",settings:"Parametrização"}[S.page]}
+function shell(){
+ $("pageTitle").textContent=title();$("connectionBadge").textContent=navigator.onLine?"Online":"Offline";$("connectionBadge").classList.toggle("online",navigator.onLine);
+ $("platformBadge").textContent="Windows";$("storageLabel").textContent=S.runtime?.storage||"SQLite local";
+ document.querySelectorAll(".nav button").forEach(b=>b.classList.toggle("active",b.dataset.page===S.page));
 }
-
-function formatMoney(cents = 0) {
-  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(cents || 0) / 100);
+function dashboard(){
+ const m=metrics(),im=invMetrics(),recent=[...tx()].sort((a,b)=>String(b.date).localeCompare(String(a.date))).slice(0,8);
+ const daily=new Map();for(const x of m.r){let d=daily.get(x.date)||{i:0,e:0};d[x.kind==="income"?"i":"e"]+=Number(x.amountCents||0);daily.set(x.date,d)}
+ const cats=new Map(),tot=m.r.filter(x=>x.kind==="expense").reduce((a,x)=>a+Number(x.amountCents||0),0);for(const x of m.r.filter(x=>x.kind==="expense"))cats.set(x.category||"Sem categoria",(cats.get(x.category||"Sem categoria")||0)+Number(x.amountCents||0));
+ return`<section class="hero"><div><h2>${esc(S.settings.profileName)}</h2><p>Controle financeiro local no Windows. O núcleo funciona sem internet.</p></div><button class="primary" data-page="transactions">Novo lançamento</button></section>
+ <section class="report-toolbar panel"><label>Mês<input id="month" type="month" value="${S.month}"></label></section>
+ <section class="kpi-grid">${k("Saldo atual",money(currentBalance()),"realizado")}${k("Saldo previsto",money(forecastBalance()),"inclui pendências")}${k("Receitas realizadas",money(m.ip))}${k("A receber",money(m.ipp))}${k("Despesas realizadas",money(m.ep))}${k("A pagar",money(m.epp))}${k("Resultado",money(m.real),`previsto ${money(m.forecast)}`)}${k("Comprometimento cartão",pct(m.commit),money(m.card))}</section>
+ <div class="two-col"><section class="panel"><div class="panel-head"><h3>Movimento diário</h3></div><div class="table-wrap"><table><thead><tr><th>Data</th><th class="right">Receitas</th><th class="right">Despesas</th></tr></thead><tbody>${daily.size?[...daily].sort((a,b)=>b[0].localeCompare(a[0])).map(([d,v])=>`<tr><td>${d}</td><td class="right income">${money(v.i)}</td><td class="right expense">${money(v.e)}</td></tr>`).join(""):`<tr><td colspan="3" class="empty">Sem movimento.</td></tr>`}</tbody></table></div></section>
+ <section class="panel"><div class="panel-head"><h3>Despesas por categoria</h3></div><div class="table-wrap"><table><thead><tr><th>Categoria</th><th class="right">Valor</th><th class="right">%</th></tr></thead><tbody>${cats.size?[...cats].sort((a,b)=>b[1]-a[1]).map(([c,v])=>`<tr><td>${esc(c)}</td><td class="right">${money(v)}</td><td class="right">${pct(tot?v/tot*100:0)}</td></tr>`).join(""):`<tr><td colspan="3" class="empty">Sem despesas.</td></tr>`}</tbody></table></div></section></div>
+ <div class="two-col"><section class="panel"><div class="panel-head"><h3>Últimos lançamentos</h3></div><div class="table-wrap"><table><tbody>${recent.length?recent.map(x=>`<tr><td>${esc(x.date)}</td><td>${esc(x.description)}</td><td class="right ${x.kind}">${x.kind==="income"?"+":"−"}${money(x.amountCents)}</td></tr>`).join(""):`<tr><td class="empty">Nenhum lançamento.</td></tr>`}</tbody></table></div></section><section class="panel"><div class="panel-head"><h3>Investimentos</h3></div><div class="panel-body mini-kpis">${k("Custo",money(im.cost))}${k("Valor atual",money(im.now))}${k("Resultado",money(im.gain),im.cost?pct(im.gain/im.cost*100):"—")}</div></section></div>`
 }
-
-function parseMoney(value) {
-  const text = String(value ?? "").trim().replace(/\s/g, "").replace(/R\$/gi, "");
-  if (!text) return 0;
-  const normalized = text.includes(",")
-    ? text.replace(/\./g, "").replace(",", ".")
-    : text;
-  const amount = Number(normalized);
-  return Number.isFinite(amount) ? Math.round(amount * 100) : 0;
+function txForm(){
+ const e=S.edit.transactions?tx().find(x=>x.id===S.edit.transactions):null;
+ return`<section class="panel"><div class="panel-head"><h3>${e?"Editar":"Novo"} lançamento</h3>${e?`<button class="ghost" data-action="cancel" data-type="transactions">Cancelar</button>`:""}</div><form id="txForm" class="form panel-body"><div class="form-grid">
+ <label>Tipo<select name="kind"><option value="income" ${e?.kind==="income"?"selected":""}>Receita</option><option value="expense" ${e?.kind==="expense"?"selected":""}>Despesa</option></select></label>
+ <label>Status<select name="status"><option value="paid" ${e?.status!=="pending"?"selected":""}>Realizado</option><option value="pending" ${e?.status==="pending"?"selected":""}>Pendente</option></select></label>
+ <label class="wide">Descrição<input name="description" required value="${esc(e?.description||"")}"></label><label>Categoria<input name="category" required value="${esc(e?.category||"")}"></label>
+ <label>Conta<input name="account" value="${esc(e?.account||S.settings.defaultAccount||"")}"></label><label>Forma<select name="paymentMethod">${Object.entries(PAYS).map(([v,l])=>`<option value="${v}" ${e?.paymentMethod===v?"selected":""}>${l}</option>`).join("")}</select></label>
+ <label>Valor<input name="amount" required value="${e?inputMoney(e.amountCents):""}" placeholder="0,00"></label><label>Data<input name="date" type="date" required value="${e?.date||today()}"></label><label>Vencimento<input name="dueDate" type="date" value="${e?.dueDate||""}"></label>
+ </div><button class="primary">Salvar</button><span id="msg" class="form-msg"></span></form></section>`
 }
-
-function pct(value, digits = 1) {
-  return `${Number(value || 0).toFixed(digits)}%`;
+function transactions(){
+ const rows=tx().filter(x=>monthOf(x.date)===S.month).sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+ return`<div class="two-col">${txForm()}<section class="panel"><div class="panel-head"><h3>Importar fatura CSV</h3></div><form id="importForm" class="form panel-body"><p class="muted">Colunas: data, descrição e valor. Os itens entram como despesas pendentes no cartão de crédito.</p><label>Arquivo<input name="file" type="file" accept=".csv,text/csv" required></label><label>Vencimento<input name="dueDate" type="date"></label><label>Conta/cartão<input name="account" value="${esc(S.settings.defaultAccount)}"></label><button class="ghost">Importar</button><span id="importMsg" class="form-msg"></span></form></section></div>
+ <section class="panel"><div class="report-toolbar"><label>Mês<input id="month" type="month" value="${S.month}"></label><div><button class="ghost" data-action="exportTx">Exportar CSV</button></div></div><div class="table-wrap"><table><thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Conta</th><th>Forma</th><th>Status</th><th class="right">Valor</th><th></th></tr></thead><tbody>${rows.length?rows.map(x=>`<tr><td>${x.date}</td><td>${esc(x.description)}</td><td>${esc(x.category)}</td><td>${esc(x.account||"—")}</td><td>${esc(PAYS[x.paymentMethod]||"Outro")}</td><td>${x.status==="pending"?"Pendente":"Realizado"}</td><td class="right ${x.kind}">${x.kind==="income"?"+":"−"}${money(x.amountCents)}</td><td class="right actions-cell">${x.status==="pending"?`<button class="ghost" data-action="settle" data-id="${x.id}">Baixar</button>`:""}<button class="ghost" data-action="edit" data-type="transactions" data-id="${x.id}">Editar</button><button class="danger ghost" data-action="delete" data-type="transactions" data-id="${x.id}">Excluir</button></td></tr>`).join(""):`<tr><td colspan="8" class="empty">Nenhum lançamento.</td></tr>`}</tbody></table></div></section>`
 }
-
-function today() {
-  const d = new Date();
-  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
-  return local.toISOString().slice(0, 10);
+function openfinance(){
+ const e=S.edit.accounts?ac().find(x=>x.id===S.edit.accounts):null,total=ac().reduce((a,x)=>a+Number(x.balanceCents||0),0);
+ return`<section class="hero"><div><h2>Open Finance</h2><p>A conexão automática exige backend seguro. Nenhuma credencial bancária é embutida no aplicativo.</p></div><span class="status-badge ${navigator.onLine?"online":""}">${navigator.onLine?"Internet disponível":"Offline"}</span></section>
+ <div class="two-col"><section class="panel"><div class="panel-head"><h3>${e?"Editar":"Cadastrar"} conta manual</h3>${e?`<button class="ghost" data-action="cancel" data-type="accounts">Cancelar</button>`:""}</div><form id="accountForm" class="form panel-body"><div class="form-grid"><label class="wide">Nome<input name="name" required value="${esc(e?.name||"")}"></label><label>Instituição<input name="institution" value="${esc(e?.institution||"")}"></label><label>Tipo<select name="type"><option value="checking">Conta corrente</option><option value="savings">Poupança</option><option value="credit">Cartão</option><option value="other">Outra</option></select></label><label>Saldo informado<input name="balance" value="${e?inputMoney(e.balanceCents):""}"></label></div><button class="primary">Salvar conta</button></form></section>
+ <section class="panel"><div class="panel-head"><h3>Status</h3></div><div class="panel-body">${k("Saldo informado",money(total),`${ac().length} conta(s)`)}<p class="muted">Integração automática: não configurada nesta build. As contas manuais funcionam offline.</p></div></section></div>
+ <section class="panel"><div class="table-wrap"><table><thead><tr><th>Conta</th><th>Instituição</th><th class="right">Saldo</th><th></th></tr></thead><tbody>${ac().length?ac().map(x=>`<tr><td>${esc(x.name)}</td><td>${esc(x.institution||"—")}</td><td class="right">${money(x.balanceCents)}</td><td class="right actions-cell"><button class="ghost" data-action="edit" data-type="accounts" data-id="${x.id}">Editar</button><button class="danger ghost" data-action="delete" data-type="accounts" data-id="${x.id}">Excluir</button></td></tr>`).join(""):`<tr><td colspan="4" class="empty">Nenhuma conta.</td></tr>`}</tbody></table></div></section>`
 }
-
-function monthOf(date) {
-  return String(date || "").slice(0, 7);
+function investments(){
+ const e=S.edit.investments?inv().find(x=>x.id===S.edit.investments):null,m=invMetrics();
+ return`<div class="two-col"><section class="panel"><div class="panel-head"><h3>${e?"Editar":"Novo"} investimento</h3>${e?`<button class="ghost" data-action="cancel" data-type="investments">Cancelar</button>`:""}</div><form id="invForm" class="form panel-body"><div class="form-grid"><label class="wide">Ativo<input name="name" required value="${esc(e?.name||"")}"></label><label>Tipo<select name="type"><option value="fixed_income">Renda fixa</option><option value="stock">Ação</option><option value="fund">Fundo</option><option value="etf">ETF</option><option value="crypto">Cripto</option><option value="other">Outro</option></select></label><label>Instituição<input name="institution" value="${esc(e?.institution||"")}"></label><label>Quantidade<input name="quantity" type="number" step="0.00000001" min="0" required value="${e?.quantity??1}"></label><label>Preço médio<input name="averagePrice" required value="${e?inputMoney(e.averagePriceCents):""}"></label><label>Preço atual<input name="currentPrice" required value="${e?inputMoney(e.currentPriceCents):""}"></label></div><button class="primary">Salvar investimento</button></form></section><section class="panel"><div class="panel-head"><h3>Carteira</h3></div><div class="panel-body mini-kpis">${k("Custo",money(m.cost))}${k("Valor atual",money(m.now))}${k("Resultado",money(m.gain),m.cost?pct(m.gain/m.cost*100):"—")}</div><div class="panel-body"><p class="muted">Preços atuais são informados manualmente enquanto o serviço de cotações não estiver integrado.</p></div></section></div>
+ <section class="panel"><div class="panel-head"><h3>Posições</h3><button class="ghost" data-action="exportInv">Exportar CSV</button></div><div class="table-wrap"><table><thead><tr><th>Ativo</th><th>Tipo</th><th>Instituição</th><th class="right">Qtd.</th><th class="right">Preço médio</th><th class="right">Preço atual</th><th class="right">Resultado</th><th></th></tr></thead><tbody>${inv().length?inv().map(x=>{let c=Math.round(x.quantity*x.averagePriceCents),n=Math.round(x.quantity*x.currentPriceCents);return`<tr><td>${esc(x.name)}</td><td>${esc(x.type)}</td><td>${esc(x.institution||"—")}</td><td class="right">${x.quantity}</td><td class="right">${money(x.averagePriceCents)}</td><td class="right">${money(x.currentPriceCents)}</td><td class="right ${n-c>=0?"income":"expense"}">${money(n-c)}</td><td class="right actions-cell"><button class="ghost" data-action="edit" data-type="investments" data-id="${x.id}">Editar</button><button class="danger ghost" data-action="delete" data-type="investments" data-id="${x.id}">Excluir</button></td></tr>`}).join(""):`<tr><td colspan="8" class="empty">Nenhum investimento.</td></tr>`}</tbody></table></div></section>`
 }
-
-function normalizeTauriRow(row) {
-  return {
-    id: row.id,
-    ...(row.data || {}),
-    _version: row.version,
-    _syncState: row.syncState,
-    _updatedAt: row.updatedAt,
-  };
+function settings(){
+ const s=S.settings;
+ return`<div class="two-col"><section class="panel"><div class="panel-head"><h3>Parâmetros financeiros</h3></div><form id="settingsForm" class="form panel-body"><div class="form-grid"><label class="wide">Nome do perfil<input name="profileName" required value="${esc(s.profileName)}"></label><label>Saldo inicial<input name="openingBalance" value="${inputMoney(s.openingBalanceCents)}"></label><label>Renda média mensal<input name="income" value="${inputMoney(s.averageMonthlyIncomeCents)}"></label><label>Limite total de cartões<input name="limit" value="${inputMoney(s.creditCardLimitCents)}"></label><label>Conta padrão<input name="defaultAccount" value="${esc(s.defaultAccount)}"></label></div><button class="primary">Salvar parâmetros</button></form></section>
+ <section class="panel"><div class="panel-head"><h3>Dados locais</h3></div><div class="panel-body"><p class="muted">Banco SQLite local, com verificação de integridade e backup.</p><div class="button-row"><button class="ghost" data-action="backup">Criar backup</button><button class="ghost" data-action="snapshot">Exportar JSON</button></div><p id="backupMsg" class="muted"></p></div></section></div>
+ <section class="panel"><div class="panel-body report-lines"><div><span>Armazenamento</span><strong>${esc(S.runtime?.storage||"—")}</strong></div><div><span>Integridade do banco</span><strong>${S.runtime?.databaseHealthy?"OK":esc(S.runtime?.databaseCheck||"Não verificado")}</strong></div><div><span>Banco local</span><strong>${esc(S.runtime?.databasePath||"—")}</strong></div><div><span>Modo offline</span><strong>${S.runtime?.offlineReady?"Pronto":"Indisponível"}</strong></div></div></section>`
 }
-
-function openWebDb() {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open("financa-simples-web", 1);
-    request.onupgradeneeded = () => {
-      const db = request.result;
-      if (!db.objectStoreNames.contains("entities")) {
-        const store = db.createObjectStore("entities", { keyPath: "id" });
-        store.createIndex("entityType", "entityType", { unique: false });
-      }
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
+function render(){shell();$("view").innerHTML=({dashboard,transactions,openfinance,investments,settings}[S.page]||dashboard)()}
+async function refresh(t){S.data[t]=await list(t);if(t==="settings")S.settings={...D,...(S.data.settings[0]||{})}}
+function csvLine(line,del){let o=[],c="",q=false;for(let i=0;i<line.length;i++){let ch=line[i];if(ch==='"'){if(q&&line[i+1]==='"'){c+='"';i++}else q=!q}else if(ch===del&&!q){o.push(c.trim());c=""}else c+=ch}o.push(c.trim());return o}
+function norm(s){return String(s||"").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"")}
+function parseCsv(text){
+ const lines=String(text).split(/\r?\n/).filter(x=>x.trim());if(lines.length<2)throw Error("CSV vazio.");
+ const del=((lines[0].match(/;/g)||[]).length>=(lines[0].match(/,/g)||[]).length)?";":",",h=csvLine(lines[0],del).map(norm),fi=(...n)=>h.findIndex(x=>n.includes(x));
+ const di=fi("data","date","data compra"),xi=fi("descricao","description","historico","estabelecimento","lancamento"),ai=fi("valor","amount","total"),ci=fi("categoria","category");if(di<0||xi<0||ai<0)throw Error("O CSV precisa ter data, descrição e valor.");
+ return lines.slice(1).map(l=>{let c=csvLine(l,del),d=String(c[di]||"").trim();if(/^\d{2}\/\d{2}\/\d{4}$/.test(d)){let[a,b,y]=d.split("/");d=`${y}-${b}-${a}`}return{date:d,description:String(c[xi]||"").trim(),amountCents:Math.abs(parseMoney(c[ai])),category:ci>=0?String(c[ci]||"Cartão de crédito"):"Cartão de crédito"}}).filter(x=>x.description&&x.amountCents>0&&/^\d{4}-\d{2}-\d{2}$/.test(x.date))
 }
-
-async function webList(entityType) {
-  const db = await openWebDb();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction("entities", "readonly");
-    const req = tx.objectStore("entities").index("entityType").getAll(entityType);
-    req.onsuccess = () => resolve((req.result || []).filter((item) => !item.deleted).map((item) => ({
-      id: item.id,
-      ...(item.data || {}),
-      _version: item.version,
-      _syncState: "local",
-      _updatedAt: item.updatedAt,
-    })));
-    req.onerror = () => reject(req.error);
-  });
-}
-
-async function webSave(entityType, data, id = null) {
-  const db = await openWebDb();
-  const recordId = id || uuid();
-  const current = await new Promise((resolve, reject) => {
-    const tx = db.transaction("entities", "readonly");
-    const req = tx.objectStore("entities").get(recordId);
-    req.onsuccess = () => resolve(req.result || null);
-    req.onerror = () => reject(req.error);
-  });
-  const now = new Date().toISOString();
-  const record = {
-    id: recordId,
-    entityType,
-    data,
-    version: (current?.version || 0) + 1,
-    createdAt: current?.createdAt || now,
-    updatedAt: now,
-    deleted: false,
-  };
-  await new Promise((resolve, reject) => {
-    const tx = db.transaction("entities", "readwrite");
-    tx.objectStore("entities").put(record);
-    tx.oncomplete = resolve;
-    tx.onerror = () => reject(tx.error);
-  });
-  return { id: recordId, ...data, _version: record.version, _syncState: "local", _updatedAt: now };
-}
-
-async function webDelete(entityType, id) {
-  const db = await openWebDb();
-  await new Promise((resolve, reject) => {
-    const tx = db.transaction("entities", "readwrite");
-    const store = tx.objectStore("entities");
-    const req = store.get(id);
-    req.onsuccess = () => {
-      if (req.result) store.put({ ...req.result, deleted: true, version: (req.result.version || 0) + 1, updatedAt: new Date().toISOString() });
-    };
-    tx.oncomplete = resolve;
-    tx.onerror = () => reject(tx.error);
-  });
-}
-
-const storage = {
-  async runtime() {
-    if (tauriInvoke) return tauriInvoke("runtime_status");
-    return { platform: "web", storage: "IndexedDB do navegador", offlineReady: true, syncQueueEnabled: false, databasePath: "Navegador" };
-  },
-  async list(type) {
-    if (tauriInvoke) return (await tauriInvoke("list_entities", { entityType: type })).map(normalizeTauriRow);
-    return webList(type);
-  },
-  async save(type, data, id = null) {
-    if (tauriInvoke) return normalizeTauriRow(await tauriInvoke("upsert_entity", { input: { entityType: type, id, data } }));
-    return webSave(type, data, id);
-  },
-  async remove(type, id) {
-    if (tauriInvoke) return tauriInvoke("delete_entity", { entityType: type, id });
-    return webDelete(type, id);
-  },
-  async pendingCount() {
-    return tauriInvoke ? tauriInvoke("pending_sync_count") : 0;
-  },
-  async backup() {
-    if (tauriInvoke) return tauriInvoke("create_backup");
-    const snapshot = await buildSnapshot();
-    downloadText(`financa-simples-backup-${today()}.json`, JSON.stringify(snapshot, null, 2), "application/json");
-    return "Backup JSON baixado pelo navegador";
-  },
-};
-
-async function loadAll() {
-  const entries = await Promise.all(ENTITY_TYPES.map(async (type) => [type, await storage.list(type)]));
-  for (const [type, rows] of entries) state.data[type] = rows;
-  const saved = state.data.settings[0];
-  state.settings = { ...defaults, ...(saved || {}) };
-}
-
-async function reloadType(type) {
-  state.data[type] = await storage.list(type);
-  if (type === "settings") state.settings = { ...defaults, ...(state.data.settings[0] || {}) };
-}
-
-function transactions() {
-  return state.data.transactions || [];
-}
-
-function paidTransactions() {
-  return transactions().filter((t) => t.status !== "pending");
-}
-
-function cashBalance() {
-  return Number(state.settings.openingBalanceCents || 0) + paidTransactions().reduce((sum, t) => sum + (t.kind === "income" ? t.amountCents : -t.amountCents), 0);
-}
-
-function monthTransactions(month = state.reportMonth) {
-  return transactions().filter((t) => monthOf(t.date) === month);
-}
-
-function monthMetrics(month = state.reportMonth) {
-  const rows = monthTransactions(month);
-  const revenue = rows.filter((t) => t.kind === "income").reduce((s, t) => s + Number(t.amountCents || 0), 0);
-  const expenses = rows.filter((t) => t.kind === "expense").reduce((s, t) => s + Number(t.amountCents || 0), 0);
-  const resultBeforeTax = revenue - expenses;
-  let estimatedTax = 0;
-  if (state.settings.taxRegime === "real") {
-    estimatedTax = Math.max(resultBeforeTax, 0) * Number(state.settings.realIncomeTaxRate || 0) / 100;
-  } else if (state.settings.taxRegime === "presumido") {
-    estimatedTax = revenue * Number(state.settings.presumedTaxRate || 0) / 100;
-  } else {
-    estimatedTax = revenue * Number(state.settings.effectiveTaxRate || 0) / 100;
-  }
-  return { rows, revenue, expenses, resultBeforeTax, estimatedTax: Math.round(estimatedTax), net: Math.round(resultBeforeTax - estimatedTax) };
-}
-
-function payrollTotal() {
-  return (state.data.employees || []).filter((e) => e.active !== false).reduce((s, e) => s + Number(e.totalCostCents || 0), 0);
-}
-
-function inventoryValue() {
-  return (state.data.inventory || []).reduce((s, i) => s + Math.round(Number(i.quantity || 0) * Number(i.unitCostCents || 0)), 0);
-}
-
-function receivables() {
-  return transactions().filter((t) => t.kind === "income" && t.status === "pending").reduce((s, t) => s + Number(t.amountCents || 0), 0);
-}
-
-function payables() {
-  return transactions().filter((t) => t.kind === "expense" && t.status === "pending").reduce((s, t) => s + Number(t.amountCents || 0), 0);
-}
-
-function pageTitle() {
-  return {
-    dashboard: "Visão geral",
-    finance: "Financeiro",
-    quotes: "Orçamentos de venda",
-    products: "Produtos e precificação",
-    inventory: "Estoque",
-    employees: "Gestão de funcionários",
-    reports: "Relatórios e análises",
-    integrations: "Integrações",
-    settings: "Configurações",
-  }[state.page] || "Finança Simples";
-}
-
-function renderShellStatus() {
-  state.online = navigator.onLine;
-  el("pageTitle").textContent = pageTitle();
-  el("connectionBadge").textContent = state.online ? "Online" : "Offline";
-  el("connectionBadge").classList.toggle("online", state.online);
-  el("platformBadge").textContent = state.runtime?.platform === "desktop" ? "Desktop" : "Web";
-  el("storageLabel").textContent = state.runtime?.storage || "Armazenamento local";
-  document.querySelectorAll(".nav button").forEach((button) => button.classList.toggle("active", button.dataset.page === state.page));
-}
-
-function kpi(label, value, hint = "") {
-  return `<article class="kpi"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(hint)}</small></article>`;
-}
-
-function dashboardView() {
-  const metrics = monthMetrics(new Date().toISOString().slice(0, 7));
-  const margin = metrics.revenue ? (metrics.net / metrics.revenue) * 100 : 0;
-  const lowStock = state.data.inventory.filter((i) => Number(i.quantity || 0) <= Number(i.minQuantity || 0)).length;
-  const recent = [...transactions()].sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, 8);
-  return `
-    <section class="hero"><div><h2>${escapeHtml(state.settings.companyName)}</h2><p>Gestão financeira local-first. O desktop continua operando sem internet e a mesma interface roda no navegador.</p></div><button class="primary" data-page="finance">Novo lançamento</button></section>
-    <section class="kpi-grid">
-      ${kpi("Saldo de caixa", formatMoney(cashBalance()), "movimentos pagos")}
-      ${kpi("Receita do mês", formatMoney(metrics.revenue), "competência")}
-      ${kpi("Resultado líquido estimado", formatMoney(metrics.net), `margem ${pct(margin)}`)}
-      ${kpi("A receber", formatMoney(receivables()), "pendente")}
-      ${kpi("A pagar", formatMoney(payables()), "pendente")}
-      ${kpi("Estoque", formatMoney(inventoryValue()), `${lowStock} alerta(s)`)}
-      ${kpi("Custo mensal de pessoal", formatMoney(payrollTotal()), "funcionários ativos")}
-      ${kpi("Orçamentos", String(state.data.quotes.length), "propostas cadastradas")}
-    </section>
-    <section class="panel"><div class="panel-head"><h3>Movimentações recentes</h3><button class="ghost" data-page="finance">Ver financeiro</button></div><div class="table-wrap"><table><thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Status</th><th class="right">Valor</th></tr></thead><tbody>
-      ${recent.length ? recent.map((t) => `<tr><td>${escapeHtml(t.date)}</td><td>${escapeHtml(t.description)}</td><td>${escapeHtml(t.category)}</td><td><span class="tag">${t.status === "pending" ? "Pendente" : "Pago"}</span></td><td class="right ${t.kind}">${t.kind === "income" ? "+" : "−"}${formatMoney(t.amountCents)}</td></tr>`).join("") : `<tr><td colspan="5" class="empty">Nenhum lançamento cadastrado.</td></tr>`}
-    </tbody></table></div></section>`;
-}
-
-function financeView() {
-  const rows = [...transactions()].sort((a, b) => String(b.date).localeCompare(String(a.date)));
-  return `
-    <div class="two-col">
-      <section class="panel"><div class="panel-head"><h3>Novo lançamento</h3></div><form id="transactionForm" class="form panel-body">
-        <div class="form-grid">
-          <label>Tipo<select name="kind"><option value="income">Receita</option><option value="expense">Despesa</option></select></label>
-          <label>Status<select name="status"><option value="paid">Pago/Recebido</option><option value="pending">Pendente</option></select></label>
-          <label class="wide">Descrição<input name="description" required maxlength="160" placeholder="Venda, fornecedor, aluguel..."></label>
-          <label>Categoria<input name="category" required placeholder="Vendas, Fornecedores..."></label>
-          <label>Valor<input name="amount" required inputmode="decimal" placeholder="0,00"></label>
-          <label>Data<input name="date" type="date" required value="${today()}"></label>
-          <label>Vencimento<input name="dueDate" type="date"></label>
-        </div><button class="primary" type="submit">Salvar lançamento</button><span class="form-msg" id="transactionMsg"></span>
-      </form></section>
-      <section class="panel"><div class="panel-head"><h3>Resumo</h3></div><div class="panel-body mini-kpis">
-        ${kpi("Saldo", formatMoney(cashBalance()))}${kpi("A receber", formatMoney(receivables()))}${kpi("A pagar", formatMoney(payables()))}
-      </div></section>
-    </div>
-    <section class="panel"><div class="panel-head"><h3>Livro caixa / contas</h3><button class="ghost" data-action="export-transactions">Exportar CSV</button></div><div class="table-wrap"><table><thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Status</th><th>Vencimento</th><th class="right">Valor</th><th></th></tr></thead><tbody>
-      ${rows.length ? rows.map((t) => `<tr><td>${escapeHtml(t.date)}</td><td>${escapeHtml(t.description)}</td><td>${escapeHtml(t.category)}</td><td>${t.status === "pending" ? "Pendente" : "Pago"}</td><td>${escapeHtml(t.dueDate || "—")}</td><td class="right ${t.kind}">${t.kind === "income" ? "+" : "−"}${formatMoney(t.amountCents)}</td><td class="right"><button class="danger ghost" data-action="delete" data-type="transactions" data-id="${t.id}">Excluir</button></td></tr>`).join("") : `<tr><td colspan="7" class="empty">Sem lançamentos.</td></tr>`}
-    </tbody></table></div></section>`;
-}
-
-function quoteTotal(q) {
-  const gross = Number(q.quantity || 0) * Number(q.unitPriceCents || 0);
-  return Math.max(0, Math.round(gross * (1 - Number(q.discountPercent || 0) / 100)));
-}
-
-function quotesView() {
-  const quotes = [...state.data.quotes].sort((a, b) => String(b.date).localeCompare(String(a.date)));
-  return `
-    <div class="two-col"><section class="panel"><div class="panel-head"><h3>Novo orçamento</h3></div><form id="quoteForm" class="form panel-body"><div class="form-grid">
-      <label class="wide">Cliente<input name="customer" required placeholder="Nome do cliente"></label>
-      <label class="wide">Descrição<input name="description" required placeholder="Produto ou serviço"></label>
-      <label>Quantidade<input name="quantity" type="number" min="0.01" step="0.01" value="1" required></label>
-      <label>Valor unitário<input name="unitPrice" inputmode="decimal" required placeholder="0,00"></label>
-      <label>Desconto %<input name="discountPercent" type="number" min="0" max="100" step="0.01" value="0"></label>
-      <label>Validade<input name="validUntil" type="date"></label>
-    </div><button class="primary">Criar orçamento</button></form></section>
-    <section class="panel"><div class="panel-head"><h3>Fluxo</h3></div><div class="panel-body"><p class="muted">Aprovar → importar para o financeiro → acompanhar o recebimento. A importação cria uma conta a receber e preserva o vínculo com o orçamento.</p></div></section></div>
-    <section class="cards-list">${quotes.length ? quotes.map((q) => `<article class="panel quote-card"><div><small>${escapeHtml(q.number)}</small><h3>${escapeHtml(q.customer)}</h3><p>${escapeHtml(q.description)}</p><strong>${formatMoney(quoteTotal(q))}</strong></div><div class="quote-actions"><span class="tag ${q.status}">${q.status === "approved" ? "Aprovado" : q.status === "rejected" ? "Recusado" : "Rascunho"}</span>${q.status === "draft" ? `<button class="ghost" data-action="quote-status" data-id="${q.id}" data-status="approved">Aprovar</button><button class="ghost" data-action="quote-status" data-id="${q.id}" data-status="rejected">Recusar</button>` : ""}${q.status === "approved" && !q.importedTransactionId ? `<button class="primary" data-action="quote-import" data-id="${q.id}">Importar financeiro</button>` : ""}${q.importedTransactionId ? `<span class="muted">Importado</span>` : ""}<button class="danger ghost" data-action="delete" data-type="quotes" data-id="${q.id}">Excluir</button></div></article>`).join("") : `<div class="empty panel">Nenhum orçamento cadastrado.</div>`}</section>`;
-}
-
-function productRecommendedPrice(p) {
-  const base = Number(p.costCents || 0) + Number(p.laborCostCents || 0);
-  const overhead = Number(p.overheadPercent ?? state.settings.fixedCostRate ?? 0) / 100;
-  const tax = Number(p.taxPercent ?? state.settings.effectiveTaxRate ?? 0) / 100;
-  const margin = Number(p.targetMarginPercent ?? state.settings.desiredMargin ?? 0) / 100;
-  const loadedCost = base * (1 + overhead);
-  const denominator = 1 - tax - margin;
-  return denominator > 0 ? Math.round(loadedCost / denominator) : 0;
-}
-
-function productsView() {
-  const products = state.data.products;
-  return `
-    <div class="two-col"><section class="panel"><div class="panel-head"><h3>Novo produto / serviço</h3></div><form id="productForm" class="form panel-body"><div class="form-grid">
-      <label class="wide">Nome<input name="name" required></label><label>SKU<input name="sku"></label>
-      <label>Custo de insumos<input name="cost" inputmode="decimal" required placeholder="0,00"></label>
-      <label>Mão de obra direta<input name="laborCost" inputmode="decimal" placeholder="0,00"></label>
-      <label>Rateio custos fixos %<input name="overheadPercent" type="number" step="0.01" value="${state.settings.fixedCostRate}"></label>
-      <label>Tributos %<input name="taxPercent" type="number" step="0.01" value="${state.settings.effectiveTaxRate}"></label>
-      <label>Margem desejada %<input name="targetMarginPercent" type="number" step="0.01" value="${state.settings.desiredMargin}"></label>
-    </div><button class="primary">Calcular e salvar</button></form></section>
-    <section class="panel"><div class="panel-head"><h3>Parâmetros</h3></div><div class="panel-body"><p class="muted">Regime: <strong>${escapeHtml(state.settings.taxRegime)}</strong>. A precificação usa custo + mão de obra + rateio de custos fixos e desconta tributos e margem desejada do preço final.</p></div></section></div>
-    <section class="panel"><div class="panel-head"><h3>Produtos</h3><button class="ghost" data-action="export-products">Exportar CSV</button></div><div class="table-wrap"><table><thead><tr><th>Produto</th><th>SKU</th><th class="right">Custo</th><th class="right">Preço sugerido</th><th class="right">Margem alvo</th><th></th></tr></thead><tbody>${products.length ? products.map((p) => `<tr><td>${escapeHtml(p.name)}</td><td>${escapeHtml(p.sku || "—")}</td><td class="right">${formatMoney(Number(p.costCents || 0) + Number(p.laborCostCents || 0))}</td><td class="right"><strong>${formatMoney(p.salePriceCents || productRecommendedPrice(p))}</strong></td><td class="right">${pct(p.targetMarginPercent)}</td><td class="right"><button class="danger ghost" data-action="delete" data-type="products" data-id="${p.id}">Excluir</button></td></tr>`).join("") : `<tr><td colspan="6" class="empty">Nenhum produto.</td></tr>`}</tbody></table></div></section>`;
-}
-
-function inventoryView() {
-  const items = state.data.inventory;
-  const alerts = items.filter((i) => Number(i.quantity || 0) <= Number(i.minQuantity || 0));
-  return `
-    <div class="two-col"><section class="panel"><div class="panel-head"><h3>Novo item de estoque</h3></div><form id="inventoryForm" class="form panel-body"><div class="form-grid"><label class="wide">Item<input name="name" required></label><label>Unidade<input name="unit" value="un"></label><label>Quantidade<input name="quantity" type="number" step="0.001" value="0"></label><label>Estoque mínimo<input name="minQuantity" type="number" step="0.001" value="0"></label><label>Custo unitário<input name="unitCost" inputmode="decimal" placeholder="0,00"></label></div><button class="primary">Salvar item</button></form></section>
-    <section class="panel"><div class="panel-head"><h3>Indicadores</h3></div><div class="panel-body mini-kpis">${kpi("Valor em estoque", formatMoney(inventoryValue()))}${kpi("Abaixo do mínimo", String(alerts.length))}</div></section></div>
-    <section class="panel"><div class="panel-head"><h3>Posição de estoque</h3></div><div class="table-wrap"><table><thead><tr><th>Item</th><th>Unidade</th><th class="right">Quantidade</th><th class="right">Mínimo</th><th class="right">Custo unit.</th><th class="right">Valor</th><th></th></tr></thead><tbody>${items.length ? items.map((i) => `<tr class="${Number(i.quantity || 0) <= Number(i.minQuantity || 0) ? "alert-row" : ""}"><td>${escapeHtml(i.name)}</td><td>${escapeHtml(i.unit)}</td><td class="right">${Number(i.quantity || 0).toLocaleString("pt-BR")}</td><td class="right">${Number(i.minQuantity || 0).toLocaleString("pt-BR")}</td><td class="right">${formatMoney(i.unitCostCents)}</td><td class="right">${formatMoney(Math.round(Number(i.quantity || 0) * Number(i.unitCostCents || 0)))}</td><td class="right"><button class="ghost" data-action="stock-adjust" data-id="${i.id}">Movimentar</button><button class="danger ghost" data-action="delete" data-type="inventory" data-id="${i.id}">Excluir</button></td></tr>`).join("") : `<tr><td colspan="7" class="empty">Nenhum item em estoque.</td></tr>`}</tbody></table></div></section>`;
-}
-
-function employeesView() {
-  const employees = state.data.employees;
-  return `
-    <div class="two-col"><section class="panel"><div class="panel-head"><h3>Novo funcionário</h3></div><form id="employeeForm" class="form panel-body"><div class="form-grid"><label class="wide">Nome<input name="name" required></label><label>Cargo<input name="role" required></label><label>Salário bruto<input name="salary" inputmode="decimal" required></label><label>Benefícios<input name="benefits" inputmode="decimal" placeholder="0,00"></label><label>Outros custos<input name="other" inputmode="decimal" placeholder="0,00"></label><label>Encargos estimados %<input name="burdenRate" type="number" step="0.01" value="${state.settings.payrollBurdenRate}"></label></div><button class="primary">Cadastrar funcionário</button></form></section>
-    <section class="panel"><div class="panel-head"><h3>Custo da equipe</h3></div><div class="panel-body mini-kpis">${kpi("Mensal", formatMoney(payrollTotal()))}${kpi("Ativos", String(employees.filter((e) => e.active !== false).length))}</div></section></div>
-    <section class="panel"><div class="panel-head"><h3>Funcionários</h3></div><div class="table-wrap"><table><thead><tr><th>Nome</th><th>Cargo</th><th class="right">Salário</th><th class="right">Encargos</th><th class="right">Custo total</th><th></th></tr></thead><tbody>${employees.length ? employees.map((e) => `<tr><td>${escapeHtml(e.name)}</td><td>${escapeHtml(e.role)}</td><td class="right">${formatMoney(e.salaryCents)}</td><td class="right">${pct(e.burdenRate)}</td><td class="right"><strong>${formatMoney(e.totalCostCents)}</strong></td><td class="right"><button class="danger ghost" data-action="delete" data-type="employees" data-id="${e.id}">Excluir</button></td></tr>`).join("") : `<tr><td colspan="6" class="empty">Nenhum funcionário.</td></tr>`}</tbody></table></div></section>`;
-}
-
-function reportsView() {
-  const m = monthMetrics(state.reportMonth);
-  const expenseGroups = new Map();
-  m.rows.filter((t) => t.kind === "expense").forEach((t) => expenseGroups.set(t.category || "Outros", (expenseGroups.get(t.category || "Outros") || 0) + Number(t.amountCents || 0)));
-  const cash = cashBalance();
-  const inventory = inventoryValue();
-  const rec = receivables();
-  const pay = payables();
-  const assets = cash + inventory + rec;
-  const liabilities = pay;
-  const equity = assets - liabilities;
-  const currentRatio = liabilities > 0 ? assets / liabilities : null;
-  return `
-    <section class="report-toolbar panel"><label>Competência<input id="reportMonth" type="month" value="${state.reportMonth}"></label><div><button class="ghost" data-action="print-report">Imprimir / PDF</button><button class="ghost" data-action="export-transactions">CSV</button></div></section>
-    <section class="kpi-grid">${kpi("Receita", formatMoney(m.revenue))}${kpi("Despesas", formatMoney(m.expenses))}${kpi("Tributos estimados", formatMoney(m.estimatedTax), state.settings.taxRegime)}${kpi("Resultado líquido", formatMoney(m.net))}${kpi("Ativos", formatMoney(assets))}${kpi("Passivos", formatMoney(liabilities))}${kpi("Patrimônio líquido", formatMoney(equity))}${kpi("Liquidez", currentRatio == null ? "∞" : currentRatio.toFixed(2))}</section>
-    <div class="two-col"><section class="panel"><div class="panel-head"><h3>DRE gerencial</h3></div><div class="report-lines"><div><span>Receita bruta</span><strong>${formatMoney(m.revenue)}</strong></div>${[...expenseGroups.entries()].map(([name, value]) => `<div><span>(−) ${escapeHtml(name)}</span><strong>${formatMoney(value)}</strong></div>`).join("")}<div><span>Resultado antes dos tributos</span><strong>${formatMoney(m.resultBeforeTax)}</strong></div><div><span>(−) Tributos estimados</span><strong>${formatMoney(m.estimatedTax)}</strong></div><div class="total"><span>Resultado líquido</span><strong>${formatMoney(m.net)}</strong></div></div></section>
-    <section class="panel"><div class="panel-head"><h3>Análise vertical</h3></div><div class="report-lines"><div><span>Receita</span><strong>100,0%</strong></div>${[...expenseGroups.entries()].map(([name, value]) => `<div><span>${escapeHtml(name)}</span><strong>${m.revenue ? pct(value / m.revenue * 100) : "0,0%"}</strong></div>`).join("")}<div class="total"><span>Margem líquida</span><strong>${m.revenue ? pct(m.net / m.revenue * 100) : "0,0%"}</strong></div></div></section></div>
-    <div class="two-col"><section class="panel"><div class="panel-head"><h3>Balanço simplificado</h3></div><div class="report-lines"><div><span>Caixa e bancos</span><strong>${formatMoney(cash)}</strong></div><div><span>Contas a receber</span><strong>${formatMoney(rec)}</strong></div><div><span>Estoques</span><strong>${formatMoney(inventory)}</strong></div><div class="total"><span>Total do ativo</span><strong>${formatMoney(assets)}</strong></div><div><span>Contas a pagar</span><strong>${formatMoney(pay)}</strong></div><div class="total"><span>Patrimônio líquido</span><strong>${formatMoney(equity)}</strong></div></div></section>
-    <section class="panel"><div class="panel-head"><h3>Saúde financeira</h3></div><div class="panel-body"><p class="analysis-text">${financialDiagnosis(m, assets, liabilities)}</p></div></section></div>`;
-}
-
-function financialDiagnosis(m, assets, liabilities) {
-  const margin = m.revenue ? m.net / m.revenue * 100 : 0;
-  const liquidity = liabilities ? assets / liabilities : 99;
-  const parts = [];
-  parts.push(m.net >= 0 ? `O período apresenta resultado positivo de ${formatMoney(m.net)}.` : `O período apresenta prejuízo de ${formatMoney(Math.abs(m.net))}.`);
-  parts.push(`A margem líquida estimada é ${pct(margin)}.`);
-  parts.push(liquidity >= 1.2 ? `A liquidez corrente simplificada está confortável (${liquidity.toFixed(2)}).` : `A liquidez simplificada está pressionada (${liquidity.toFixed(2)}); priorize caixa e redução de obrigações de curto prazo.`);
-  return parts.join(" ");
-}
-
-function integrationsView() {
-  return `<section class="integration-grid">
-    ${integrationCard("Open Finance / Pluggy", "Importação e conciliação bancária", "A conexão com o provedor exige backend seguro; dados já sincronizados devem permanecer em cache local.")}
-    ${integrationCard("Cotações", "Moedas, índices e ativos", "Quando online o sistema poderá atualizar as séries; offline usa a última informação armazenada.")}
-    ${integrationCard("Agente IA", "Análise financeira assistida", "KPIs e cálculos determinísticos funcionam localmente; respostas generativas exigem serviço online.")}
-    ${integrationCard("Sincronização em nuvem", "Desktop ↔ Web", "A camada local já versiona registros e mantém fila; o endpoint de nuvem deve ser configurado antes de produção multiusuário.")}
-  </section>`;
-}
-
-function integrationCard(title, subtitle, text) {
-  return `<article class="panel integration-card"><div class="panel-head"><h3>${escapeHtml(title)}</h3><span class="tag ${state.online ? "approved" : ""}">${state.online ? "Internet disponível" : "Offline"}</span></div><div class="panel-body"><strong>${escapeHtml(subtitle)}</strong><p class="muted">${escapeHtml(text)}</p></div></article>`;
-}
-
-function settingsView() {
-  return `<section class="panel"><div class="panel-head"><h3>Empresa e parâmetros gerenciais</h3></div><form id="settingsForm" class="form panel-body"><div class="form-grid">
-    <label class="wide">Nome da empresa<input name="companyName" value="${escapeHtml(state.settings.companyName)}"></label>
-    <label>Saldo inicial<input name="openingBalance" value="${(Number(state.settings.openingBalanceCents || 0) / 100).toFixed(2).replace(".", ",")}"></label>
-    <label>Regime tributário<select name="taxRegime"><option value="simples" ${state.settings.taxRegime === "simples" ? "selected" : ""}>Simples Nacional</option><option value="presumido" ${state.settings.taxRegime === "presumido" ? "selected" : ""}>Lucro Presumido</option><option value="real" ${state.settings.taxRegime === "real" ? "selected" : ""}>Lucro Real</option></select></label>
-    <label>Alíquota efetiva Simples %<input name="effectiveTaxRate" type="number" step="0.01" value="${state.settings.effectiveTaxRate}"></label>
-    <label>Tributos Presumido %<input name="presumedTaxRate" type="number" step="0.01" value="${state.settings.presumedTaxRate}"></label>
-    <label>IR/CSLL Real %<input name="realIncomeTaxRate" type="number" step="0.01" value="${state.settings.realIncomeTaxRate}"></label>
-    <label>Encargos de folha %<input name="payrollBurdenRate" type="number" step="0.01" value="${state.settings.payrollBurdenRate}"></label>
-    <label>Rateio de custos fixos %<input name="fixedCostRate" type="number" step="0.01" value="${state.settings.fixedCostRate}"></label>
-    <label>Margem padrão %<input name="desiredMargin" type="number" step="0.01" value="${state.settings.desiredMargin}"></label>
-  </div><div class="button-row"><button class="primary">Salvar configurações</button><button type="button" class="ghost" data-action="backup">Criar backup</button></div><p class="muted">Os percentuais tributários são parâmetros gerenciais configuráveis, não substituem a apuração fiscal oficial.</p><div id="settingsMsg" class="form-msg"></div></form></section>`;
-}
-
-function render() {
-  renderShellStatus();
-  const views = {
-    dashboard: dashboardView,
-    finance: financeView,
-    quotes: quotesView,
-    products: productsView,
-    inventory: inventoryView,
-    employees: employeesView,
-    reports: reportsView,
-    integrations: integrationsView,
-    settings: settingsView,
-  };
-  el("view").innerHTML = (views[state.page] || dashboardView)();
-  bindForms();
-}
-
-function formData(form) {
-  return Object.fromEntries(new FormData(form).entries());
-}
-
-function bindForms() {
-  el("transactionForm")?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const f = formData(event.currentTarget);
-    const amountCents = parseMoney(f.amount);
-    if (amountCents <= 0) return setMsg("transactionMsg", "Informe um valor válido.", true);
-    await storage.save("transactions", { kind: f.kind, status: f.status, description: f.description.trim(), category: f.category.trim(), amountCents, date: f.date, dueDate: f.dueDate || "", source: "manual", createdAt: new Date().toISOString() });
-    await reloadType("transactions"); render();
-  });
-
-  el("quoteForm")?.addEventListener("submit", async (event) => {
-    event.preventDefault(); const f = formData(event.currentTarget);
-    const count = state.data.quotes.length + 1;
-    await storage.save("quotes", { number: `ORC-${new Date().getFullYear()}-${String(count).padStart(4, "0")}`, customer: f.customer.trim(), description: f.description.trim(), quantity: Number(f.quantity || 1), unitPriceCents: parseMoney(f.unitPrice), discountPercent: Number(f.discountPercent || 0), date: today(), validUntil: f.validUntil || "", status: "draft", importedTransactionId: null });
-    await reloadType("quotes"); render();
-  });
-
-  el("productForm")?.addEventListener("submit", async (event) => {
-    event.preventDefault(); const f = formData(event.currentTarget);
-    const product = { name: f.name.trim(), sku: f.sku.trim(), costCents: parseMoney(f.cost), laborCostCents: parseMoney(f.laborCost), overheadPercent: Number(f.overheadPercent || 0), taxPercent: Number(f.taxPercent || 0), targetMarginPercent: Number(f.targetMarginPercent || 0) };
-    product.salePriceCents = productRecommendedPrice(product);
-    if (!product.salePriceCents) return alert("Tributos + margem precisam ser menores que 100%.");
-    await storage.save("products", product); await reloadType("products"); render();
-  });
-
-  el("inventoryForm")?.addEventListener("submit", async (event) => {
-    event.preventDefault(); const f = formData(event.currentTarget);
-    await storage.save("inventory", { name: f.name.trim(), unit: f.unit.trim() || "un", quantity: Number(f.quantity || 0), minQuantity: Number(f.minQuantity || 0), unitCostCents: parseMoney(f.unitCost) });
-    await reloadType("inventory"); render();
-  });
-
-  el("employeeForm")?.addEventListener("submit", async (event) => {
-    event.preventDefault(); const f = formData(event.currentTarget);
-    const salaryCents = parseMoney(f.salary), benefitsCents = parseMoney(f.benefits), otherCents = parseMoney(f.other), burdenRate = Number(f.burdenRate || 0);
-    const totalCostCents = Math.round(salaryCents * (1 + burdenRate / 100) + benefitsCents + otherCents);
-    await storage.save("employees", { name: f.name.trim(), role: f.role.trim(), salaryCents, benefitsCents, otherCents, burdenRate, totalCostCents, active: true });
-    await reloadType("employees"); render();
-  });
-
-  el("settingsForm")?.addEventListener("submit", async (event) => {
-    event.preventDefault(); const f = formData(event.currentTarget);
-    const data = { companyName: f.companyName.trim() || "Minha empresa", openingBalanceCents: parseMoney(f.openingBalance), taxRegime: f.taxRegime, effectiveTaxRate: Number(f.effectiveTaxRate || 0), presumedTaxRate: Number(f.presumedTaxRate || 0), realIncomeTaxRate: Number(f.realIncomeTaxRate || 0), payrollBurdenRate: Number(f.payrollBurdenRate || 0), fixedCostRate: Number(f.fixedCostRate || 0), desiredMargin: Number(f.desiredMargin || 0) };
-    await storage.save("settings", data, state.data.settings[0]?.id || null); await reloadType("settings"); setMsg("settingsMsg", "Configurações salvas localmente."); renderShellStatus();
-  });
-
-  el("reportMonth")?.addEventListener("change", (event) => { state.reportMonth = event.target.value; render(); });
-}
-
-function setMsg(id, text, error = false) {
-  const node = el(id); if (!node) return; node.textContent = text; node.classList.toggle("error", error);
-}
-
-async function buildSnapshot() {
-  return { schemaVersion: 2, generatedAt: new Date().toISOString(), platform: state.runtime?.platform, data: Object.fromEntries(ENTITY_TYPES.map((t) => [t, state.data[t]])) };
-}
-
-function downloadText(filename, content, mime = "text/plain") {
-  const blob = new Blob([content], { type: mime }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = filename; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-function csvEscape(value) {
-  const text = String(value ?? ""); return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
-}
-
-function exportTransactions() {
-  const header = ["Data", "Tipo", "Status", "Descrição", "Categoria", "Valor", "Vencimento"];
-  const rows = transactions().map((t) => [t.date, t.kind, t.status, t.description, t.category, (Number(t.amountCents || 0) / 100).toFixed(2), t.dueDate || ""]);
-  downloadText(`lancamentos-${today()}.csv`, [header, ...rows].map((r) => r.map(csvEscape).join(";")).join("\n"), "text/csv;charset=utf-8");
-}
-
-function exportProducts() {
-  const header = ["Produto", "SKU", "Custo", "Preço sugerido", "Margem alvo %"];
-  const rows = state.data.products.map((p) => [p.name, p.sku || "", ((Number(p.costCents || 0) + Number(p.laborCostCents || 0)) / 100).toFixed(2), (Number(p.salePriceCents || 0) / 100).toFixed(2), p.targetMarginPercent || 0]);
-  downloadText(`produtos-${today()}.csv`, [header, ...rows].map((r) => r.map(csvEscape).join(";")).join("\n"), "text/csv;charset=utf-8");
-}
-
-async function handleAction(target) {
-  const action = target.dataset.action;
-  if (action === "delete") {
-    if (!confirm("Excluir este registro?")) return;
-    await storage.remove(target.dataset.type, target.dataset.id); await reloadType(target.dataset.type); render(); return;
-  }
-  if (action === "quote-status") {
-    const q = state.data.quotes.find((x) => x.id === target.dataset.id); if (!q) return;
-    await storage.save("quotes", { ...stripMeta(q), status: target.dataset.status }, q.id); await reloadType("quotes"); render(); return;
-  }
-  if (action === "quote-import") {
-    const q = state.data.quotes.find((x) => x.id === target.dataset.id); if (!q) return;
-    const transaction = await storage.save("transactions", { kind: "income", status: "pending", description: `Orçamento ${q.number} — ${q.customer}`, category: "Vendas", amountCents: quoteTotal(q), date: today(), dueDate: q.validUntil || "", source: "quote", quoteId: q.id, createdAt: new Date().toISOString() });
-    await storage.save("quotes", { ...stripMeta(q), importedTransactionId: transaction.id }, q.id); await Promise.all([reloadType("quotes"), reloadType("transactions")]); render(); return;
-  }
-  if (action === "stock-adjust") {
-    const item = state.data.inventory.find((x) => x.id === target.dataset.id); if (!item) return;
-    const raw = prompt(`Movimentação de ${item.name}. Use positivo para entrada e negativo para saída:`, "0"); if (raw == null) return;
-    const delta = Number(String(raw).replace(",", ".")); if (!Number.isFinite(delta) || delta === 0) return;
-    await storage.save("inventory", { ...stripMeta(item), quantity: Number(item.quantity || 0) + delta, lastMovementAt: new Date().toISOString() }, item.id); await reloadType("inventory"); render(); return;
-  }
-  if (action === "export-transactions") return exportTransactions();
-  if (action === "export-products") return exportProducts();
-  if (action === "print-report") return window.print();
-  if (action === "backup") {
-    const result = await storage.backup(); alert(result); return;
-  }
-}
-
-function stripMeta(record) {
-  const { id, _version, _syncState, _updatedAt, ...data } = record; return data;
-}
-
-document.addEventListener("click", async (event) => {
-  const pageTarget = event.target.closest("[data-page]");
-  if (pageTarget) { state.page = pageTarget.dataset.page; render(); return; }
-  const actionTarget = event.target.closest("[data-action]");
-  if (actionTarget) {
-    try { await handleAction(actionTarget); } catch (error) { alert(String(error?.message || error)); }
-  }
+function download(name,text,type="text/plain;charset=utf-8"){let u=URL.createObjectURL(new Blob([text],{type})),a=document.createElement("a");a.href=u;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(u),500)}
+const q=v=>`"${String(v??"").replaceAll('"','""')}"`;
+function exportTx(){let h=["Data","Tipo","Status","Descrição","Categoria","Conta","Forma","Valor"],r=tx().map(x=>[x.date,x.kind,x.status,x.description,x.category,x.account||"",PAYS[x.paymentMethod]||"",inputMoney(x.amountCents)].map(q).join(";"));download(`financa-simples-lancamentos-${today()}.csv`,[h.map(q).join(";"),...r].join("\n"),"text/csv;charset=utf-8")}
+function exportInv(){let h=["Ativo","Tipo","Instituição","Quantidade","Preço médio","Preço atual"],r=inv().map(x=>[x.name,x.type,x.institution||"",x.quantity,inputMoney(x.averagePriceCents),inputMoney(x.currentPriceCents)].map(q).join(";"));download(`financa-simples-investimentos-${today()}.csv`,[h.map(q).join(";"),...r].join("\n"),"text/csv;charset=utf-8")}
+document.addEventListener("click",async e=>{
+ const b=e.target.closest("button");if(!b)return;
+ if(b.dataset.page){S.page=b.dataset.page;render();return}
+ const a=b.dataset.action,t=b.dataset.type,id=b.dataset.id;
+ try{
+  if(a==="edit"){S.edit[t]=id;S.page=t==="transactions"?"transactions":t==="accounts"?"openfinance":"investments"}
+  if(a==="cancel")S.edit[t]=null;
+  if(a==="delete"){if(confirm("Excluir este registro?")){await remove(t,id);await refresh(t);S.edit[t]=null}}
+  if(a==="settle"){let x=tx().find(y=>y.id===id),{id:_id,_updatedAt,...d}=x;await save("transactions",{...d,status:"paid"},id);await refresh("transactions")}
+  if(a==="exportTx")exportTx();if(a==="exportInv")exportInv();
+  if(a==="backup")$("backupMsg").textContent=await invoke("create_backup");
+  if(a==="snapshot")download(`financa-simples-${today()}.json`,JSON.stringify({product:"Finança Simples",schemaVersion:3,generatedAt:new Date().toISOString(),settings:S.settings,transactions:tx(),accounts:ac(),investments:inv()},null,2),"application/json");
+  render()
+ }catch(err){alert(err.message||err)}
 });
-
-window.addEventListener("online", () => { state.online = true; renderShellStatus(); });
-window.addEventListener("offline", () => { state.online = false; renderShellStatus(); });
-
-async function boot() {
-  try {
-    state.runtime = await storage.runtime();
-    await loadAll();
-    render();
-    if (!tauriInvoke && "serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js").catch(() => {});
-  } catch (error) {
-    el("view").innerHTML = `<section class="fatal"><h2>Não foi possível iniciar o Finança Simples</h2><p>${escapeHtml(String(error?.message || error))}</p></section>`;
-  }
-}
-
-boot();
+document.addEventListener("change",e=>{if(e.target.id==="month"){S.month=e.target.value;render()}});
+document.addEventListener("submit",async e=>{
+ e.preventDefault();let f=e.target,fd=new FormData(f);
+ try{
+  if(f.id==="txForm"){let d={kind:fd.get("kind"),status:fd.get("status"),description:String(fd.get("description")||"").trim(),category:String(fd.get("category")||"").trim(),account:String(fd.get("account")||"").trim(),paymentMethod:fd.get("paymentMethod"),amountCents:parseMoney(fd.get("amount")),date:fd.get("date"),dueDate:fd.get("dueDate")||"",source:"manual"};if(!d.description||!d.category||!d.date||d.amountCents<=0)throw Error("Preencha os campos obrigatórios.");await save("transactions",d,S.edit.transactions);S.edit.transactions=null;await refresh("transactions")}
+  if(f.id==="accountForm"){let d={name:String(fd.get("name")||"").trim(),institution:String(fd.get("institution")||"").trim(),type:fd.get("type"),balanceCents:parseMoney(fd.get("balance"))};if(!d.name)throw Error("Informe o nome da conta.");await save("accounts",d,S.edit.accounts);S.edit.accounts=null;await refresh("accounts")}
+  if(f.id==="invForm"){let d={name:String(fd.get("name")||"").trim(),type:fd.get("type"),institution:String(fd.get("institution")||"").trim(),quantity:Number(fd.get("quantity")||0),averagePriceCents:parseMoney(fd.get("averagePrice")),currentPriceCents:parseMoney(fd.get("currentPrice"))};if(!d.name||d.quantity<=0)throw Error("Preencha o investimento.");await save("investments",d,S.edit.investments);S.edit.investments=null;await refresh("investments")}
+  if(f.id==="settingsForm"){let d={profileName:String(fd.get("profileName")||"Meu financeiro"),openingBalanceCents:parseMoney(fd.get("openingBalance")),averageMonthlyIncomeCents:parseMoney(fd.get("income")),creditCardLimitCents:parseMoney(fd.get("limit")),defaultAccount:String(fd.get("defaultAccount")||""),currency:"BRL"};await save("settings",d,S.data.settings[0]?.id||null);await refresh("settings")}
+  if(f.id==="importForm"){let file=fd.get("file");if(!(file instanceof File)||!file.size)throw Error("Selecione um CSV.");let rows=parseCsv(await file.text()),due=fd.get("dueDate")||"",account=String(fd.get("account")||"");if(!rows.length)throw Error("Nenhum item válido.");for(const x of rows)await save("transactions",{kind:"expense",status:"pending",description:x.description,category:x.category,account,paymentMethod:"credit_card",amountCents:x.amountCents,date:x.date,dueDate:due,source:"invoice_csv"});await refresh("transactions");alert(`${rows.length} item(ns) importado(s).`)}
+  render()
+ }catch(err){alert(err.message||err)}
+});
+window.addEventListener("online",shell);window.addEventListener("offline",shell);
+document.addEventListener("DOMContentLoaded",async()=>{try{if(!invoke)throw Error("O Finança Simples deve ser aberto pelo aplicativo instalado no Windows.");S.runtime=await invoke("runtime_status");await load();render()}catch(err){$("view").innerHTML=`<section class="fatal"><h3>Falha ao iniciar.</h3><p>${esc(err.message||err)}</p></section>`}});

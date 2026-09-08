@@ -54,7 +54,7 @@ jobs:
       - name: Instalar dependências
         run: npm ci
 
-      - name: Validar aplicação embarcada
+      - name: Validar escopo e frontend embarcado
         shell: pwsh
         run: |
           $required = @(
@@ -62,19 +62,49 @@ jobs:
             "desktop-dist/app.js",
             "desktop-dist/styles.css"
           )
-
           foreach ($path in $required) {
             if (-not (Test-Path $path)) {
-              throw "Arquivo obrigatório do modo offline não encontrado: $path"
+              throw "Arquivo obrigatório não encontrado: $path"
             }
           }
 
+          node --check desktop-dist/app.js
+
           $index = Get-Content "desktop-dist/index.html" -Raw
-          if ($index -match "window.location.replace") {
-            throw "O desktop voltou a depender de redirecionamento remoto."
+          $app = Get-Content "desktop-dist/app.js" -Raw
+          $frontend = "$index`n$app"
+
+          if ($frontend -match "window.location.replace") {
+            throw "O aplicativo voltou a depender de redirecionamento remoto."
           }
 
-          Write-Host "Frontend local presente e sem redirecionamento obrigatório."
+          $forbidden = @(
+            "Produtos & Precificação",
+            "Produtos e precificação",
+            "Gestão de funcionários",
+            "Funcionários",
+            "Estoque",
+            "payrollTotal",
+            "inventoryValue",
+            "productRecommendedPrice"
+          )
+          foreach ($term in $forbidden) {
+            if ($frontend -match [regex]::Escape($term)) {
+              throw "Escopo incorreto detectado no Finança Simples: $term"
+            }
+          }
+
+          $requiredLabels = @("Dashboard", "Lançamentos", "Open Finance", "Investimentos", "Parametrização")
+          foreach ($label in $requiredLabels) {
+            if ($frontend -notmatch [regex]::Escape($label)) {
+              throw "Módulo obrigatório ausente: $label"
+            }
+          }
+
+          Write-Host "Escopo do Finança Simples validado."
+
+      - name: Testar banco local e isolamento de escopo
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
 
       - name: Verificar núcleo Rust
         run: cargo check --manifest-path src-tauri/Cargo.toml
@@ -87,7 +117,7 @@ jobs:
         run: |
           $exe = Resolve-Path "src-tauri/target/release/financa-simples-desktop.exe"
           $process = Start-Process -FilePath $exe -PassThru
-          Start-Sleep -Seconds 12
+          Start-Sleep -Seconds 15
           $process.Refresh()
 
           if ($process.HasExited) {
@@ -95,7 +125,7 @@ jobs:
           }
 
           Stop-Process -Id $process.Id -Force
-          Write-Host "Smoke test aprovado: núcleo offline permaneceu aberto por 12 segundos."
+          Write-Host "Smoke test aprovado: aplicativo permaneceu aberto por 15 segundos."
 
       - name: Publicar instalador como artefato
         uses: actions/upload-artifact@v4
@@ -126,7 +156,7 @@ jobs:
             gh release create desktop-preview $installer.FullName `
               --prerelease `
               --title "Finança Simples para Windows" `
-              --notes "Build offline-first validado: frontend embarcado, SQLite local e smoke test automático."
+              --notes "Build Windows validado: Dashboard, Lançamentos, Open Finance manual/seguro, Investimentos, Parametrização, SQLite local e importação de fatura CSV."
           } else {
             $oldAssets = gh release view desktop-preview --json assets --jq '.assets[].name'
             foreach ($asset in $oldAssets) {
@@ -137,5 +167,5 @@ jobs:
             gh release upload desktop-preview $installer.FullName
             gh release edit desktop-preview `
               --title "Finança Simples para Windows" `
-              --notes "Build offline-first validado: frontend embarcado, SQLite local e smoke test automático."
+              --notes "Build Windows validado: Dashboard, Lançamentos, Open Finance manual/seguro, Investimentos, Parametrização, SQLite local e importação de fatura CSV."
           }
