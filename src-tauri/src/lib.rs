@@ -196,7 +196,7 @@ fn upsert_entity(db: State<'_, LocalDb>, input: EntityInput) -> Result<EntityRow
         .query_row(
             "SELECT version, created_at FROM entities WHERE id = ?1",
             params![id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
         )
         .optional()
         .map_err(|error| error.to_string())?;
@@ -257,16 +257,16 @@ fn delete_entity(
         .map_err(|_| "banco local indisponível".to_string())?;
     let transaction = connection.transaction().map_err(|error| error.to_string())?;
 
-    let version: i64 = transaction
+    let current_version: i64 = transaction
         .query_row(
             "SELECT version FROM entities WHERE id = ?1 AND entity_type = ?2",
             params![id, entity_type],
-            |row| row.get(0),
+            |row| row.get::<_, i64>(0),
         )
         .optional()
         .map_err(|error| error.to_string())?
-        .ok_or_else(|| "registro não encontrado".to_string())?
-        + 1;
+        .ok_or_else(|| "registro não encontrado".to_string())?;
+    let version = current_version + 1;
 
     transaction
         .execute(
@@ -300,7 +300,7 @@ fn pending_sync_count(db: State<'_, LocalDb>) -> Result<i64, String> {
         .query_row(
             "SELECT COUNT(*) FROM sync_queue WHERE status = 'pending'",
             [],
-            |row| row.get(0),
+            |row| row.get::<_, i64>(0),
         )
         .map_err(|error| error.to_string())
 }
