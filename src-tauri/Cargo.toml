@@ -1,6 +1,6 @@
 [package]
 name = "financa-simples-desktop"
-version = "1.0.0"
+version = "1.0.1"
 description = "Aplicativo Windows do Finança Simples"
 authors = ["Finança Simples"]
 edition = "2021"
