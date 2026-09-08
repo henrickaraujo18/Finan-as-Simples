@@ -9,6 +9,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   windows:
     runs-on: windows-latest
@@ -32,11 +36,42 @@ jobs:
       - name: Preparar Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache do Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+
+      - name: Validar canal de atualização
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_UPDATER_PUBKEY)) {
+            throw "Secret TAURI_UPDATER_PUBLIC_KEY não configurado."
+          }
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
+            throw "Secret TAURI_SIGNING_PRIVATE_KEY não configurado."
+          }
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD)) {
+            throw "Secret TAURI_SIGNING_PRIVATE_KEY_PASSWORD não configurado."
+          }
+
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+            if (-not $env:GITHUB_REF_NAME.StartsWith("desktop-v")) {
+              throw "Tag inválida: $env:GITHUB_REF_NAME"
+            }
+
+            $tagVersion = $env:GITHUB_REF_NAME.Substring("desktop-v".Length)
+            $config = Get-Content "src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json
+
+            if ($config.version -ne $tagVersion) {
+              throw "A tag desktop-v$tagVersion não corresponde à versão $($config.version) em src-tauri/tauri.conf.json."
+            }
+          }
+
       - name: Instalar dependências
         run: npm ci
 
       - name: Compilar, assinar e publicar
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -46,3 +81,7 @@ jobs:
           releaseBody: "Atualização automática do Finança Simples para Windows."
           releaseDraft: false
           prerelease: false
+          retryAttempts: 2
+          uploadUpdaterJson: true
+          uploadUpdaterSignatures: true
+          updaterJsonPreferNsis: true
