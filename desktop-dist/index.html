@@ -6,7 +6,6 @@
     <meta name="theme-color" content="#0a1512" />
     <meta name="color-scheme" content="dark" />
     <title>Finança Simples</title>
-    <link rel="manifest" href="manifest.webmanifest" />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
@@ -14,19 +13,20 @@
       <aside class="sidebar">
         <div class="brand">
           <div class="brand-mark">FS</div>
-          <div><strong>Finança Simples</strong><small>Sistema multiplataforma</small></div>
+          <div>
+            <strong>Finança Simples</strong>
+            <small>Controle financeiro</small>
+          </div>
         </div>
+
         <nav class="nav" aria-label="Navegação principal">
-          <button data-page="dashboard" class="active"><span>Visão geral</span></button>
-          <button data-page="finance"><span>Financeiro</span></button>
-          <button data-page="quotes"><span>Orçamentos</span></button>
-          <button data-page="products"><span>Produtos & Precificação</span></button>
-          <button data-page="inventory"><span>Estoque</span></button>
-          <button data-page="employees"><span>Funcionários</span></button>
-          <button data-page="reports"><span>Relatórios & Análises</span></button>
-          <button data-page="integrations"><span>Integrações</span></button>
-          <button data-page="settings"><span>Configurações</span></button>
+          <button data-page="dashboard" class="active"><span>Dashboard</span></button>
+          <button data-page="transactions"><span>Lançamentos</span></button>
+          <button data-page="openfinance"><span>Open Finance</span></button>
+          <button data-page="investments"><span>Investimentos</span></button>
+          <button data-page="settings"><span>Parametrização</span></button>
         </nav>
+
         <div class="sidebar-foot">
           <span id="platformBadge" class="side-badge">—</span>
           <small id="storageLabel">Inicializando armazenamento...</small>
@@ -35,12 +35,21 @@
 
       <main class="main-area">
         <header class="topbar">
-          <div><small>Finança Simples</small><h1 id="pageTitle">Visão geral</h1></div>
-          <div class="topbar-actions"><span id="connectionBadge" class="status-badge">Verificando...</span></div>
+          <div>
+            <small>Finança Simples</small>
+            <h1 id="pageTitle">Dashboard</h1>
+          </div>
+          <div class="topbar-actions">
+            <span id="connectionBadge" class="status-badge">Verificando...</span>
+          </div>
         </header>
-        <div id="view" class="content"><section class="loading">Carregando o sistema...</section></div>
+
+        <div id="view" class="content">
+          <section class="loading">Carregando o sistema...</section>
+        </div>
       </main>
     </div>
+
     <script src="app.js"></script>
   </body>
 </html>
