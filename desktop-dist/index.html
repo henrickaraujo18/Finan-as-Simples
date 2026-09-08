@@ -3,22 +3,44 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0a1512" />
     <meta name="color-scheme" content="dark" />
     <title>Finança Simples</title>
-    <style>
-      :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; background: #07120f; color: #e8fff7; }
-      body { margin: 0; min-height: 100vh; display: grid; place-items: center; }
-      main { text-align: center; padding: 2rem; }
-      .mark { width: 72px; height: 72px; margin: 0 auto 1.25rem; border-radius: 22px; display: grid; place-items: center; background: #0d211b; border: 1px solid #35d0a566; box-shadow: 0 20px 60px #0008; color: #35d0a5; font-size: 1.75rem; font-weight: 800; }
-      h1 { margin: 0; font-size: 1.5rem; }
-      p { margin: .65rem 0 0; color: #9ab7ad; }
-    </style>
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <main>
-      <div class="mark" aria-hidden="true">FS</div>
-      <h1>Finança Simples</h1>
-      <p>Preparando seu ambiente financeiro...</p>
-    </main>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">FS</div>
+          <div><strong>Finança Simples</strong><small>Sistema multiplataforma</small></div>
+        </div>
+        <nav class="nav" aria-label="Navegação principal">
+          <button data-page="dashboard" class="active"><span>Visão geral</span></button>
+          <button data-page="finance"><span>Financeiro</span></button>
+          <button data-page="quotes"><span>Orçamentos</span></button>
+          <button data-page="products"><span>Produtos & Precificação</span></button>
+          <button data-page="inventory"><span>Estoque</span></button>
+          <button data-page="employees"><span>Funcionários</span></button>
+          <button data-page="reports"><span>Relatórios & Análises</span></button>
+          <button data-page="integrations"><span>Integrações</span></button>
+          <button data-page="settings"><span>Configurações</span></button>
+        </nav>
+        <div class="sidebar-foot">
+          <span id="platformBadge" class="side-badge">—</span>
+          <small id="storageLabel">Inicializando armazenamento...</small>
+        </div>
+      </aside>
+
+      <main class="main-area">
+        <header class="topbar">
+          <div><small>Finança Simples</small><h1 id="pageTitle">Visão geral</h1></div>
+          <div class="topbar-actions"><span id="connectionBadge" class="status-badge">Verificando...</span></div>
+        </header>
+        <div id="view" class="content"><section class="loading">Carregando o sistema...</section></div>
+      </main>
+    </div>
+    <script src="app.js"></script>
   </body>
 </html>

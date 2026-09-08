@@ -11,6 +11,15 @@ on:
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/build-windows.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "src-tauri/**"
+      - "desktop-dist/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/build-windows.yml"
 
 permissions:
   contents: write
@@ -45,8 +54,48 @@ jobs:
       - name: Instalar dependências
         run: npm ci
 
+      - name: Validar aplicação embarcada
+        shell: pwsh
+        run: |
+          $required = @(
+            "desktop-dist/index.html",
+            "desktop-dist/app.js",
+            "desktop-dist/styles.css"
+          )
+
+          foreach ($path in $required) {
+            if (-not (Test-Path $path)) {
+              throw "Arquivo obrigatório do modo offline não encontrado: $path"
+            }
+          }
+
+          $index = Get-Content "desktop-dist/index.html" -Raw
+          if ($index -match "window.location.replace") {
+            throw "O desktop voltou a depender de redirecionamento remoto."
+          }
+
+          Write-Host "Frontend local presente e sem redirecionamento obrigatório."
+
+      - name: Verificar núcleo Rust
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+
       - name: Compilar instalador NSIS
         run: npm run build -- --config src-tauri/tauri.unsigned.conf.json --bundles nsis
+
+      - name: Smoke test do executável
+        shell: pwsh
+        run: |
+          $exe = Resolve-Path "src-tauri/target/release/financa-simples-desktop.exe"
+          $process = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 12
+          $process.Refresh()
+
+          if ($process.HasExited) {
+            throw "O Finança Simples encerrou durante a inicialização. ExitCode=$($process.ExitCode)"
+          }
+
+          Stop-Process -Id $process.Id -Force
+          Write-Host "Smoke test aprovado: núcleo offline permaneceu aberto por 12 segundos."
 
       - name: Publicar instalador como artefato
         uses: actions/upload-artifact@v4
@@ -59,6 +108,7 @@ jobs:
             src-tauri/target/release/financa-simples-desktop.exe
 
       - name: Publicar pré-release para download direto
+        if: github.event_name != 'pull_request'
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -76,7 +126,16 @@ jobs:
             gh release create desktop-preview $installer.FullName `
               --prerelease `
               --title "Finança Simples para Windows" `
-              --notes "Build instalável para Windows. O canal assinado de atualização automática será ativado nas releases estáveis."
+              --notes "Build offline-first validado: frontend embarcado, SQLite local e smoke test automático."
           } else {
-            gh release upload desktop-preview $installer.FullName --clobber
+            $oldAssets = gh release view desktop-preview --json assets --jq '.assets[].name'
+            foreach ($asset in $oldAssets) {
+              if ($asset -like "*.exe") {
+                gh release delete-asset desktop-preview $asset -y
+              }
+            }
+            gh release upload desktop-preview $installer.FullName
+            gh release edit desktop-preview `
+              --title "Finança Simples para Windows" `
+              --notes "Build offline-first validado: frontend embarcado, SQLite local e smoke test automático."
           }
