@@ -152,7 +152,7 @@ fn seed_defaults(connection: &Connection) -> Result<(), String> {
             "INSERT OR IGNORE INTO accounts
              (id, name, account_type, opening_balance_cents, created_at, updated_at)
              VALUES ('account-main', 'Conta principal', 'cash', 0, ?1, ?1)",
-            params![now],
+            params![&now],
         )
         .map_err(|error| error.to_string())?;
 
@@ -172,7 +172,7 @@ fn seed_defaults(connection: &Connection) -> Result<(), String> {
                 "INSERT OR IGNORE INTO categories
                  (id, name, kind, created_at, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?4)",
-                params![id, name, kind, now],
+                params![id, name, kind, &now],
             )
             .map_err(|error| error.to_string())?;
     }
@@ -265,7 +265,7 @@ fn dashboard(db: State<'_, LocalDb>) -> Result<Dashboard, String> {
             "SELECT COALESCE(SUM(amount_cents), 0)
              FROM transactions
              WHERE kind = 'income' AND substr(occurred_at, 1, 7) = ?1",
-            params![month_prefix],
+            params![&month_prefix],
             |row| row.get(0),
         )
         .map_err(|error| error.to_string())?;
@@ -275,7 +275,7 @@ fn dashboard(db: State<'_, LocalDb>) -> Result<Dashboard, String> {
             "SELECT COALESCE(SUM(amount_cents), 0)
              FROM transactions
              WHERE kind = 'expense' AND substr(occurred_at, 1, 7) = ?1",
-            params![month_prefix],
+            params![&month_prefix],
             |row| row.get(0),
         )
         .map_err(|error| error.to_string())?;
@@ -313,7 +313,7 @@ fn create_transaction(db: State<'_, LocalDb>, input: NewTransaction) -> Result<T
         return Err("o valor deve ser maior que zero".to_string());
     }
 
-    let description = input.description.trim();
+    let description = input.description.trim().to_string();
     if description.is_empty() {
         return Err("informe uma descrição".to_string());
     }
@@ -334,13 +334,13 @@ fn create_transaction(db: State<'_, LocalDb>, input: NewTransaction) -> Result<T
     let id = Uuid::new_v4().to_string();
 
     let payload = serde_json::json!({
-        "id": id,
-        "accountId": account_id,
-        "categoryId": category_id,
-        "kind": kind,
-        "description": description,
+        "id": &id,
+        "accountId": &account_id,
+        "categoryId": &category_id,
+        "kind": &kind,
+        "description": &description,
         "amountCents": input.amount_cents,
-        "occurredAt": occurred_at,
+        "occurredAt": &occurred_at,
         "source": "manual"
     });
 
@@ -354,14 +354,14 @@ fn create_transaction(db: State<'_, LocalDb>, input: NewTransaction) -> Result<T
               source, sync_state, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'manual', 'pending', ?8, ?8)",
             params![
-                id,
-                account_id,
-                category_id,
-                kind,
-                description,
+                &id,
+                &account_id,
+                &category_id,
+                &kind,
+                &description,
                 input.amount_cents,
-                occurred_at,
-                now
+                &occurred_at,
+                &now
             ],
         )
         .map_err(|error| format!("não foi possível salvar o lançamento: {error}"))?;
@@ -371,7 +371,7 @@ fn create_transaction(db: State<'_, LocalDb>, input: NewTransaction) -> Result<T
             "INSERT INTO sync_queue
              (entity_type, entity_id, operation, payload_json, status, created_at, updated_at)
              VALUES ('transaction', ?1, 'upsert', ?2, 'pending', ?3, ?3)",
-            params![id, payload.to_string(), now],
+            params![&id, payload.to_string(), &now],
         )
         .map_err(|error| format!("não foi possível preparar a sincronização: {error}"))?;
 
@@ -385,7 +385,7 @@ fn create_transaction(db: State<'_, LocalDb>, input: NewTransaction) -> Result<T
              JOIN accounts a ON a.id = t.account_id
              JOIN categories c ON c.id = t.category_id
              WHERE t.id = ?1",
-            params![id],
+            params![&id],
             |row| {
                 Ok(TransactionRow {
                     id: row.get(0)?,
@@ -425,8 +425,9 @@ fn build_local_db(app: &tauri::App) -> Result<LocalDb, String> {
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            let local_db = build_local_db(app)
-                .map_err(|error| Box::<dyn std::error::Error>::from(error))?;
+            let local_db = build_local_db(app).map_err(|error| -> Box<dyn std::error::Error> {
+                Box::new(std::io::Error::other(error))
+            })?;
             app.manage(local_db);
             Ok(())
         })
