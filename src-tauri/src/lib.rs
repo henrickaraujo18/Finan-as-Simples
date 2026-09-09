@@ -1,7 +1,7 @@
 use std::{fs, path::PathBuf, sync::Mutex};
 
 use chrono::Utc;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{Manager, State};
@@ -45,7 +45,14 @@ struct EntityInput {
 }
 
 fn validate_entity_type(entity_type: &str) -> Result<(), String> {
-    let allowed = ["transactions", "accounts", "investments", "settings"];
+    let allowed = [
+        "transactions",
+        "accounts",
+        "cards",
+        "categories",
+        "investments",
+        "settings",
+    ];
     if allowed.contains(&entity_type) {
         Ok(())
     } else {
@@ -88,7 +95,7 @@ fn configure_database(connection: &Connection) -> Result<(), String> {
              );
 
              INSERT OR REPLACE INTO app_metadata(key, value)
-             VALUES ('schema_version', '3');
+             VALUES ('schema_version', '4');
 
              INSERT OR REPLACE INTO app_metadata(key, value)
              VALUES ('product_scope', 'financa-simples');",
@@ -109,6 +116,48 @@ fn entity_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<EntityRow> {
         created_at: row.get(5)?,
         updated_at: row.get(6)?,
     })
+}
+
+fn upsert_in_transaction(transaction: &Transaction<'_>, input: EntityInput) -> Result<String, String> {
+    validate_entity_type(&input.entity_type)?;
+    if !input.data.is_object() {
+        return Err("o conteúdo do registro precisa ser um objeto JSON".to_string());
+    }
+
+    let id = input.id.unwrap_or_else(|| Uuid::new_v4().to_string());
+    let now = Utc::now().to_rfc3339();
+    let payload = serde_json::to_string(&input.data)
+        .map_err(|error| format!("falha ao serializar registro: {error}"))?;
+
+    let existing: Option<(i64, String)> = transaction
+        .query_row(
+            "SELECT version, created_at FROM entities WHERE id = ?1",
+            params![id],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+
+    let version = existing.as_ref().map(|(value, _)| value + 1).unwrap_or(1);
+    let created_at = existing.map(|(_, value)| value).unwrap_or_else(|| now.clone());
+
+    transaction
+        .execute(
+            "INSERT INTO entities
+             (id, entity_type, data_json, version, sync_state, deleted, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, 'local', 0, ?5, ?6)
+             ON CONFLICT(id) DO UPDATE SET
+               entity_type = excluded.entity_type,
+               data_json = excluded.data_json,
+               version = excluded.version,
+               sync_state = 'local',
+               deleted = 0,
+               updated_at = excluded.updated_at",
+            params![id, input.entity_type, payload, version, created_at, now],
+        )
+        .map_err(|error| format!("falha ao salvar registro: {error}"))?;
+
+    Ok(id)
 }
 
 #[tauri::command]
@@ -154,45 +203,9 @@ fn list_entities(db: State<'_, LocalDb>, entity_type: String) -> Result<Vec<Enti
 
 #[tauri::command]
 fn upsert_entity(db: State<'_, LocalDb>, input: EntityInput) -> Result<EntityRow, String> {
-    validate_entity_type(&input.entity_type)?;
-    if !input.data.is_object() {
-        return Err("o conteúdo do registro precisa ser um objeto JSON".to_string());
-    }
-
-    let id = input.id.unwrap_or_else(|| Uuid::new_v4().to_string());
-    let now = Utc::now().to_rfc3339();
-    let payload = serde_json::to_string(&input.data)
-        .map_err(|error| format!("falha ao serializar registro: {error}"))?;
     let mut connection = db.connection.lock().map_err(|_| "banco local indisponível".to_string())?;
     let transaction = connection.transaction().map_err(|error| error.to_string())?;
-
-    let existing: Option<(i64, String)> = transaction
-        .query_row(
-            "SELECT version, created_at FROM entities WHERE id = ?1",
-            params![id],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
-        )
-        .optional()
-        .map_err(|error| error.to_string())?;
-
-    let version = existing.as_ref().map(|(value, _)| value + 1).unwrap_or(1);
-    let created_at = existing.map(|(_, value)| value).unwrap_or_else(|| now.clone());
-
-    transaction
-        .execute(
-            "INSERT INTO entities
-             (id, entity_type, data_json, version, sync_state, deleted, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, 'local', 0, ?5, ?6)
-             ON CONFLICT(id) DO UPDATE SET
-               entity_type = excluded.entity_type,
-               data_json = excluded.data_json,
-               version = excluded.version,
-               sync_state = 'local',
-               deleted = 0,
-               updated_at = excluded.updated_at",
-            params![id, input.entity_type, payload, version, created_at, now],
-        )
-        .map_err(|error| format!("falha ao salvar registro: {error}"))?;
+    let id = upsert_in_transaction(&transaction, input)?;
     transaction.commit().map_err(|error| error.to_string())?;
 
     connection
@@ -203,6 +216,35 @@ fn upsert_entity(db: State<'_, LocalDb>, input: EntityInput) -> Result<EntityRow
             entity_from_row,
         )
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn upsert_entities(db: State<'_, LocalDb>, inputs: Vec<EntityInput>) -> Result<Vec<EntityRow>, String> {
+    if inputs.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut connection = db.connection.lock().map_err(|_| "banco local indisponível".to_string())?;
+    let transaction = connection.transaction().map_err(|error| error.to_string())?;
+    let mut ids = Vec::with_capacity(inputs.len());
+    for input in inputs {
+        ids.push(upsert_in_transaction(&transaction, input)?);
+    }
+    transaction.commit().map_err(|error| error.to_string())?;
+
+    let mut rows = Vec::with_capacity(ids.len());
+    for id in ids {
+        let row = connection
+            .query_row(
+                "SELECT id, entity_type, data_json, version, sync_state, created_at, updated_at
+                 FROM entities WHERE id = ?1",
+                params![id],
+                entity_from_row,
+            )
+            .map_err(|error| error.to_string())?;
+        rows.push(row);
+    }
+    Ok(rows)
 }
 
 #[tauri::command]
@@ -247,7 +289,7 @@ fn export_snapshot(db: State<'_, LocalDb>) -> Result<Value, String> {
             "SELECT id, entity_type, data_json, version, sync_state, created_at, updated_at
              FROM entities
              WHERE deleted = 0
-               AND entity_type IN ('transactions','accounts','investments','settings')
+               AND entity_type IN ('transactions','accounts','cards','categories','investments','settings')
              ORDER BY entity_type, updated_at",
         )
         .map_err(|error| error.to_string())?;
@@ -258,7 +300,7 @@ fn export_snapshot(db: State<'_, LocalDb>) -> Result<Value, String> {
         .map_err(|error| error.to_string())?;
     Ok(serde_json::json!({
         "product": "Finança Simples",
-        "schemaVersion": 3,
+        "schemaVersion": 4,
         "generatedAt": Utc::now().to_rfc3339(),
         "entities": rows
     }))
@@ -302,6 +344,7 @@ pub fn run() {
             runtime_status,
             list_entities,
             upsert_entity,
+            upsert_entities,
             delete_entity,
             pending_sync_count,
             export_snapshot,
@@ -316,8 +359,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn escopo_aceita_apenas_financa_simples() {
-        for entity_type in ["transactions", "accounts", "investments", "settings"] {
+    fn escopo_aceita_entidades_financeiras() {
+        for entity_type in ["transactions", "accounts", "cards", "categories", "investments", "settings"] {
             assert!(validate_entity_type(entity_type).is_ok());
         }
         for entity_type in ["products", "inventory", "employees", "quotes", "customers", "suppliers"] {
@@ -326,7 +369,7 @@ mod tests {
     }
 
     #[test]
-    fn banco_local_configura_schema_correto() {
+    fn banco_local_configura_schema_quatro() {
         let connection = Connection::open_in_memory().expect("abrir sqlite em memória");
         configure_database(&connection).expect("configurar banco");
         let schema_version: String = connection
@@ -335,7 +378,24 @@ mod tests {
         let product_scope: String = connection
             .query_row("SELECT value FROM app_metadata WHERE key = 'product_scope'", [], |row| row.get(0))
             .expect("ler product scope");
-        assert_eq!(schema_version, "3");
+        assert_eq!(schema_version, "4");
         assert_eq!(product_scope, "financa-simples");
+    }
+
+    #[test]
+    fn bulk_upsert_preserva_relacoes_json() {
+        let mut connection = Connection::open_in_memory().expect("abrir sqlite em memória");
+        configure_database(&connection).expect("configurar banco");
+        let transaction = connection.transaction().expect("iniciar transação");
+        let id = upsert_in_transaction(&transaction, EntityInput {
+            entity_type: "cards".to_string(),
+            id: None,
+            data: serde_json::json!({"name":"Cartão teste","accountId":"account-1","limitCents":100000}),
+        }).expect("salvar cartão");
+        transaction.commit().expect("confirmar transação");
+        let entity_type: String = connection
+            .query_row("SELECT entity_type FROM entities WHERE id = ?1", params![id], |row| row.get(0))
+            .expect("ler entidade");
+        assert_eq!(entity_type, "cards");
     }
 }
