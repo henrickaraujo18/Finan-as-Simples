@@ -54,12 +54,13 @@ jobs:
       - name: Instalar dependências
         run: npm ci
 
-      - name: Validar paridade financeira e frontend embarcado
+      - name: Validar paridade Essencial 2025 e frontend embarcado
         shell: pwsh
         run: |
           $required = @(
             "desktop-dist/index.html",
-            "desktop-dist/app.js",
+            "desktop-dist/core-v14.js",
+            "desktop-dist/app-v14.js",
             "desktop-dist/styles.css"
           )
           foreach ($path in $required) {
@@ -68,11 +69,13 @@ jobs:
             }
           }
 
-          node --check desktop-dist/app.js
+          node --check desktop-dist/core-v14.js
+          node --check desktop-dist/app-v14.js
 
           $index = Get-Content "desktop-dist/index.html" -Raw
-          $app = Get-Content "desktop-dist/app.js" -Raw
-          $frontend = "$index`n$app"
+          $core = Get-Content "desktop-dist/core-v14.js" -Raw
+          $app = Get-Content "desktop-dist/app-v14.js" -Raw
+          $frontend = "$index`n$core`n$app"
 
           if ($frontend -match "window.location.replace") {
             throw "O aplicativo voltou a depender de redirecionamento remoto."
@@ -98,6 +101,7 @@ jobs:
             "Dashboard",
             "Lançamentos",
             "Contas & Cartões",
+            "Resumo Anual",
             "Open Finance",
             "Investimentos",
             "Parametrização"
@@ -109,22 +113,35 @@ jobs:
           }
 
           $requiredFeatures = @(
+            "Finança Simples - Essencial 2025",
+            "Nova saída",
+            "Nova entrada",
+            "Compra no cartão",
             "installmentCount",
-            "cardId",
+            "saveRegularLaunch",
+            "saveCardLaunch",
+            "areaCategoryId",
             "closingDay",
             "dueDay",
-            "Pagar fatura",
-            "upsert_entities",
-            "targetAccountId",
-            "recurrenceGroupId"
+            "Faturas do próximo mês",
+            "Renda média mensal",
+            "openingBalanceCents",
+            "Banco 1",
+            "Banco 2",
+            "Dinheiro",
+            "upsert_entities"
           )
           foreach ($feature in $requiredFeatures) {
-            if ($app -notmatch [regex]::Escape($feature)) {
-              throw "Funcionalidade financeira obrigatória ausente: $feature"
+            if ($frontend -notmatch [regex]::Escape($feature)) {
+              throw "Paridade obrigatória ausente: $feature"
             }
           }
 
-          Write-Host "Paridade financeira mínima validada: contas, cartões, parcelas, faturas, transferências e recorrência."
+          if ($app -match "Cadastre uma conta antes de lançar movimentos") {
+            throw "Conta bancária voltou a ser pré-requisito para lançamentos."
+          }
+
+          Write-Host "Paridade Essencial 2025 validada: saída, entrada e cartão com parcelas; bancos opcionais; ciclo de fatura; categorias; dashboard mensal e resumo anual."
 
       - name: Testar banco local e relações financeiras
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib
@@ -174,7 +191,7 @@ jobs:
           git tag -f desktop-preview $env:GITHUB_SHA
           git push origin desktop-preview --force
 
-          $notes = "Build Windows 1.3 validado: contas reais, cartões vinculados, limite, fechamento/vencimento, parcelamento 1x-60x, faturas, pagamento de fatura, transferências, recorrência, categorias, investimentos, SQLite local e importação de fatura CSV."
+          $notes = "Build Windows 1.4 baseada na planilha Finança Simples - Essencial 2025: lançadores separados de saída, entrada e cartão, parcelas nos três fluxos, bancos opcionais, cartões com fechamento/vencimento/Área, fatura atual e próxima, rankings, resumo anual, SQLite local, backup e importação CSV."
 
           gh release view desktop-preview 2>$null
           if ($LASTEXITCODE -ne 0) {
