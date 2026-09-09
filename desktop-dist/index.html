@@ -8,7 +8,18 @@
     <title>Finança Simples</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
-  <body>
+  <body class="splash-active">
+    <div id="startupSplash" class="startup-splash" role="status" aria-label="Finança Simples iniciando">
+      <div class="splash-content">
+        <div class="splash-logo" aria-hidden="true">FS</div>
+        <div class="splash-brand">
+          <strong>Finança Simples</strong>
+          <span>Organização financeira com clareza e controle.</span>
+        </div>
+        <div class="splash-progress" aria-hidden="true"><i></i></div>
+      </div>
+    </div>
+
     <div class="app-shell">
       <aside class="sidebar">
         <div class="brand">
@@ -23,7 +34,7 @@
           <button data-page="dashboard" class="active"><span>Dashboard</span></button>
           <button data-page="transactions"><span>Lançamentos</span></button>
           <button data-page="accounts"><span>Contas & Cartões</span></button>
-          <button data-page="annual"><span>Resumo Anual</span></button>
+          <button data-page="annual"><span>Dashboard Analítico</span></button>
           <button data-page="openfinance"><span>Open Finance</span></button>
           <button data-page="investments"><span>Investimentos</span></button>
           <button data-page="settings"><span>Parametrização</span></button>
@@ -54,5 +65,6 @@
 
     <script src="core-v14.js"></script>
     <script src="app-v14.js"></script>
+    <script src="app-v15.js"></script>
   </body>
 </html>
