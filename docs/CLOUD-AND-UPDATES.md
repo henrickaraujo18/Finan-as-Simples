@@ -44,3 +44,13 @@ Gerar o par com o Tauri CLI fora do repositório. A chave pública pode ser dist
 ## Primeira transição
 
 Versões antigas sem updater assinado precisam receber uma instalação manual da primeira 1.6 de produção. Depois disso, versões futuras podem ser instaladas automaticamente pelo canal assinado.
+
+## Estado atual da 1.6
+
+- Backend Supabase criado e conectado à configuração pública do app.
+- RLS ativo em todas as tabelas sensíveis.
+- Security Advisor sem alertas após mover helpers privilegiados para schema privado.
+- Edge Functions de convite e redefinição implantadas.
+- Aplicativo continua offline-first com autenticação/local workspaces nesta etapa de migração.
+- Ativação completa de identidade/sincronização cloud requer concluir o fluxo de sessão Supabase no cliente e configurar a URL de redirecionamento do Auth.
+- Auto-update exige o par de assinatura Tauri configurado em GitHub Actions Secrets antes da primeira build de produção assinada.
