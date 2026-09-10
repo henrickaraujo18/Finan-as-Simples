@@ -41,8 +41,8 @@ Deno.serve(async (request: Request) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? ''
     const publishableKeys = JSON.parse(Deno.env.get('SUPABASE_PUBLISHABLE_KEYS') ?? '{}')
     const secretKeys = JSON.parse(Deno.env.get('SUPABASE_SECRET_KEYS') ?? '{}')
-    const publishableKey = publishableKeys.default ?? Deno.env.get('SUPABASE_ANON_KEY') ?? ''
-    const secretKey = secretKeys.default ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+    const publishableKey = publishableKeys.default ?? ''
+    const secretKey = secretKeys.default ?? ''
     if (!supabaseUrl || !publishableKey || !secretKey) return respond({ error: 'backend_keys_missing' }, 500)
 
     const authorization = request.headers.get('Authorization') ?? ''
