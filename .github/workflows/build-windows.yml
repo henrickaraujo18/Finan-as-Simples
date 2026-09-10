@@ -192,7 +192,7 @@ jobs:
           if ($cloud -match "service_role" -and $cloud -notmatch "NUNCA") {
             throw "Segredo service_role não pode existir na configuração do cliente."
           }
-          if ($cloud -match "SUPABASE_SERVICE_ROLE_KEY\s*[:=]\s*['\"]\S+") {
+          if ($cloud -match 'SUPABASE_SERVICE_ROLE_KEY\s*[:=]\s*\S+') {
             throw "Service role do Supabase foi exposto no frontend."
           }
           if ($rust -notmatch "password_hash" -or $rust -notmatch "hash_password") {
