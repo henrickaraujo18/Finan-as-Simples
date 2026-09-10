@@ -1,5 +1,6 @@
 -- Finança Simples — identidade, workspaces e isolamento multi-tenant
--- Aplicar em um projeto Supabase dedicado. Não utiliza service_role no cliente Windows.
+-- Aplicar somente em um projeto Supabase dedicado.
+-- Nenhuma chave privilegiada é destinada ao aplicativo Windows.
 
 create extension if not exists pgcrypto;
 
@@ -15,7 +16,7 @@ create unique index if not exists profiles_email_lower_idx on public.profiles (l
 
 create table if not exists public.workspaces (
   id uuid primary key default gen_random_uuid(),
-  name text not null check (char_length(name) between 2 and 120),
+  name text not null check (char_length(trim(name)) between 2 and 120),
   owner_user_id uuid not null references public.profiles(id),
   active boolean not null default true,
   created_at timestamptz not null default now(),
@@ -32,6 +33,9 @@ create table if not exists public.workspace_memberships (
   updated_at timestamptz not null default now(),
   primary key (workspace_id, user_id)
 );
+
+create index if not exists workspace_memberships_user_idx
+  on public.workspace_memberships(user_id, active, workspace_id);
 
 create table if not exists public.financial_entities (
   id text not null,
@@ -58,10 +62,15 @@ create table if not exists public.audit_log (
   created_at timestamptz not null default now()
 );
 
+create index if not exists audit_log_workspace_created_idx
+  on public.audit_log(workspace_id, created_at desc);
+
 create or replace function public.fs_full_permissions()
 returns jsonb
 language sql
 immutable
+security invoker
+set search_path = pg_catalog
 as $$
   select '{
     "dashboard":{"view":true,"create":false,"edit":false,"delete":false},
@@ -80,6 +89,8 @@ create or replace function public.fs_entity_module(p_entity_type text)
 returns text
 language sql
 immutable
+security invoker
+set search_path = pg_catalog
 as $$
   select case p_entity_type
     when 'transactions' then 'transactions'
@@ -97,7 +108,7 @@ returns boolean
 language sql
 stable
 security definer
-set search_path = public
+set search_path = pg_catalog, public
 as $$
   select exists (
     select 1
@@ -113,7 +124,7 @@ returns boolean
 language sql
 stable
 security definer
-set search_path = public
+set search_path = pg_catalog, public
 as $$
   select coalesce(
     (
@@ -133,19 +144,22 @@ returns boolean
 language sql
 stable
 security definer
-set search_path = public
+set search_path = pg_catalog, public
 as $$
   select coalesce((select p.is_platform_admin from public.profiles p where p.id = auth.uid()), false);
 $$;
 
+-- Criação de workspace é a única escrita administrativa exposta diretamente como RPC.
+-- Ela continua restrita ao platform admin autenticado.
 create or replace function public.fs_create_workspace(p_name text)
 returns uuid
 language plpgsql
 security definer
-set search_path = public
+set search_path = pg_catalog, public
 as $$
 declare
   v_workspace_id uuid;
+  v_name text := trim(p_name);
 begin
   if auth.uid() is null then
     raise exception 'authentication required';
@@ -153,36 +167,44 @@ begin
   if not public.fs_is_platform_admin() then
     raise exception 'platform admin required';
   end if;
+  if char_length(v_name) < 2 or char_length(v_name) > 120 then
+    raise exception 'invalid workspace name';
+  end if;
 
   insert into public.workspaces(name, owner_user_id)
-  values (trim(p_name), auth.uid())
+  values (v_name, auth.uid())
   returning id into v_workspace_id;
 
   insert into public.workspace_memberships(workspace_id, user_id, role, permissions)
   values (v_workspace_id, auth.uid(), 'owner', public.fs_full_permissions());
 
   insert into public.audit_log(workspace_id, actor_user_id, action, details)
-  values (v_workspace_id, auth.uid(), 'workspace_create', jsonb_build_object('name', trim(p_name)));
+  values (v_workspace_id, auth.uid(), 'workspace_create', jsonb_build_object('name', v_name));
 
   return v_workspace_id;
 end;
 $$;
 
+-- Bootstrap controlado: no projeto vazio, o primeiro usuário criado vira o administrador da plataforma.
+-- Criar a conta do proprietário antes de abrir cadastro/convidar terceiros.
 create or replace function public.fs_on_auth_user_created()
 returns trigger
 language plpgsql
 security definer
-set search_path = public
+set search_path = pg_catalog, public
 as $$
 declare
   v_first_admin boolean;
 begin
+  perform pg_advisory_xact_lock(hashtext('financa-simples-platform-admin-bootstrap'));
   select not exists(select 1 from public.profiles where is_platform_admin = true)
     into v_first_admin;
 
   insert into public.profiles(id, email, is_platform_admin)
   values (new.id, coalesce(new.email, ''), v_first_admin)
-  on conflict (id) do update set email = excluded.email, updated_at = now();
+  on conflict (id) do update
+    set email = excluded.email,
+        updated_at = now();
 
   return new;
 end;
@@ -199,7 +221,7 @@ alter table public.workspace_memberships enable row level security;
 alter table public.financial_entities enable row level security;
 alter table public.audit_log enable row level security;
 
--- Perfil próprio e perfis de membros dos ambientes administrados.
+-- Perfil próprio, platform admin e perfis de membros de ambientes que o chamador pode administrar.
 drop policy if exists profiles_select on public.profiles;
 create policy profiles_select on public.profiles
 for select to authenticated
@@ -218,13 +240,12 @@ using (
   )
 );
 
--- Um workspace só aparece para membros; o super admin também precisa entrar explicitamente via membership.
+-- Super admin não recebe dados financeiros automaticamente: precisa ter membership explícita no workspace.
 drop policy if exists workspaces_select on public.workspaces;
 create policy workspaces_select on public.workspaces
 for select to authenticated
 using (public.fs_has_workspace_access(id));
 
--- Memberships são visíveis para o próprio usuário ou para administradores de usuários daquele workspace.
 drop policy if exists memberships_select on public.workspace_memberships;
 create policy memberships_select on public.workspace_memberships
 for select to authenticated
@@ -233,7 +254,6 @@ using (
   or public.fs_can(workspace_id, 'users', 'view')
 );
 
--- Entidades financeiras: isolamento por workspace + permissão por módulo.
 drop policy if exists entities_select on public.financial_entities;
 create policy entities_select on public.financial_entities
 for select to authenticated
@@ -267,7 +287,6 @@ create policy entities_delete on public.financial_entities
 for delete to authenticated
 using (public.fs_can(workspace_id, public.fs_entity_module(entity_type), 'delete'));
 
--- Auditoria é somente leitura para administradores do workspace; inserts são feitos por funções/edge functions.
 drop policy if exists audit_select on public.audit_log;
 create policy audit_select on public.audit_log
 for select to authenticated
@@ -276,6 +295,31 @@ using (
   and public.fs_can(workspace_id, 'users', 'view')
 );
 
-grant execute on function public.fs_create_workspace(text) to authenticated;
+-- Em projetos Supabase novos o Data API não deve depender de grants implícitos.
+revoke all on public.profiles from anon;
+revoke all on public.workspaces from anon;
+revoke all on public.workspace_memberships from anon;
+revoke all on public.financial_entities from anon;
+revoke all on public.audit_log from anon;
+
+grant select on public.profiles to authenticated;
+grant select on public.workspaces to authenticated;
+grant select on public.workspace_memberships to authenticated;
+grant select, insert, update, delete on public.financial_entities to authenticated;
+grant select on public.audit_log to authenticated;
+
+-- Funções privilegiadas: retirar EXECUTE implícito de PUBLIC/anon e conceder somente o necessário.
+revoke all on function public.fs_full_permissions() from public, anon;
+revoke all on function public.fs_entity_module(text) from public, anon;
+revoke all on function public.fs_has_workspace_access(uuid) from public, anon;
+revoke all on function public.fs_can(uuid, text, text) from public, anon;
+revoke all on function public.fs_is_platform_admin() from public, anon;
+revoke all on function public.fs_create_workspace(text) from public, anon;
+revoke all on function public.fs_on_auth_user_created() from public, anon, authenticated;
+
+grant execute on function public.fs_full_permissions() to authenticated;
+grant execute on function public.fs_entity_module(text) to authenticated;
 grant execute on function public.fs_has_workspace_access(uuid) to authenticated;
 grant execute on function public.fs_can(uuid, text, text) to authenticated;
+grant execute on function public.fs_is_platform_admin() to authenticated;
+grant execute on function public.fs_create_workspace(text) to authenticated;
