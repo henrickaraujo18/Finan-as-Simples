@@ -7,6 +7,7 @@ edition = "2021"
 
 [lib]
 name = "financa_simples_desktop"
+path = "src/lib_operational.rs"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
