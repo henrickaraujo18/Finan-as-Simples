@@ -994,7 +994,7 @@ fn auth_list_members(
          WHERE m.workspace_id=?1 AND m.active=1 AND u.active=1
          ORDER BY CASE m.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END,u.email"
     ).map_err(|error| error.to_string())?;
-    statement.query_map(params![workspace_id], |row| {
+    let rows = statement.query_map(params![workspace_id], |row| {
         let user_id: String = row.get(0)?;
         let raw: String = row.get(3)?;
         Ok(MemberSummary {
@@ -1006,7 +1006,8 @@ fn auth_list_members(
             is_super_admin: row.get::<_,i64>(4)? != 0,
         })
     }).map_err(|error| error.to_string())?
-      .collect::<Result<Vec<_>,_>>().map_err(|error| error.to_string())
+      .collect::<Result<Vec<_>,_>>().map_err(|error| error.to_string())?;
+    Ok(rows)
 }
 
 #[tauri::command]
@@ -1023,7 +1024,7 @@ fn auth_create_or_grant_user(
         _ => "custom".to_string(),
     };
     let now = Utc::now().to_rfc3339();
-    let mut connection = db.connection.lock().map_err(|_| "banco local indisponível".to_string())?;
+    let connection = db.connection.lock().map_err(|_| "banco local indisponível".to_string())?;
     require_user_admin(&connection, &caller_id, &input.workspace_id, is_super_admin, "create")?;
     let caller_role = workspace_role(&connection, &caller_id, &input.workspace_id)?;
     if !is_super_admin && caller_role != "owner" && !permissions_subset(&permissions, &caller_permissions) {
@@ -1154,9 +1155,10 @@ fn list_entities(
         "SELECT id,entity_type,data_json,version,sync_state,created_at,updated_at
          FROM entities WHERE workspace_id=?1 AND entity_type=?2 AND deleted=0 ORDER BY updated_at DESC"
     ).map_err(|error| error.to_string())?;
-    statement.query_map(params![workspace_id,entity_type], entity_from_row)
+    let rows = statement.query_map(params![workspace_id,entity_type], entity_from_row)
         .map_err(|error| error.to_string())?
-        .collect::<Result<Vec<_>,_>>().map_err(|error| error.to_string())
+        .collect::<Result<Vec<_>,_>>().map_err(|error| error.to_string())?;
+    Ok(rows)
 }
 
 #[tauri::command]
