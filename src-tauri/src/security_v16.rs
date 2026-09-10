@@ -11,7 +11,7 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 fn quote_sql_path(path: &Path) -> String {
-    path.to_string_lossy().replace(''', "''")
+    path.to_string_lossy().replace('\'', "''")
 }
 
 fn key_path(database_path: &Path) -> Result<PathBuf, String> {
@@ -102,7 +102,9 @@ fn migrate_plaintext(database_path: &Path, key: &[u8]) -> Result<(), String> {
     let plaintext = Connection::open(database_path)
         .map_err(|error| format!("falha ao abrir banco legado para migração: {error}"))?;
     quick_check(&plaintext)?;
-    let _ = plaintext.execute_batch("PRAGMA wal_checkpoint(FULL);");
+    plaintext
+        .execute_batch("PRAGMA wal_checkpoint(FULL);")
+        .map_err(|error| format!("falha ao consolidar banco legado antes da migração: {error}"))?;
 
     let attach = format!(
         "ATTACH DATABASE '{}' AS encrypted KEY \"x'{}'\";\nSELECT sqlcipher_export('encrypted');\nDETACH DATABASE encrypted;",
@@ -127,9 +129,8 @@ fn migrate_plaintext(database_path: &Path, key: &[u8]) -> Result<(), String> {
         return Err(format!("falha ao ativar banco criptografado: {error}"));
     }
 
-    // O arquivo legado é removido somente depois que a base criptografada foi validada e ativada.
-    // Em SSDs, remoção de arquivo não equivale a apagamento físico garantido; a proteção de disco
-    // do Windows continua sendo recomendada para resíduos de armazenamento.
+    // Removido somente depois da validação e troca atômica. Em SSD/NTFS, remoção lógica
+    // não garante apagamento físico; BitLocker continua recomendado para proteção de resíduos.
     let _ = fs::remove_file(&legacy_path);
     let _ = fs::remove_file(format!("{}-wal", database_path.to_string_lossy()));
     let _ = fs::remove_file(format!("{}-shm", database_path.to_string_lossy()));
