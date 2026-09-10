@@ -6,6 +6,10 @@
     return Boolean(window.FSCloudConfig?.supabaseUrl && window.FSCloudRuntime);
   }
 
+  function setText(node, value) {
+    if (node && node.textContent !== value) node.textContent = value;
+  }
+
   function replaceCopy(root = document) {
     if (!cloudReady()) return;
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
@@ -19,35 +23,30 @@
     ]);
     let node;
     while ((node = walker.nextNode())) {
-      let value = node.nodeValue || "";
+      const original = node.nodeValue || "";
+      let value = original;
       for (const [from, to] of replacements) value = value.replace(from, to);
-      node.nodeValue = value;
+      if (value !== original) node.nodeValue = value;
     }
 
     const gate = document.getElementById("authGate");
     const setup = document.getElementById("ownerSetupForm");
     if (gate && setup) {
-      const eyebrow = gate.querySelector(".auth-heading span");
-      const title = gate.querySelector(".auth-heading h2");
-      const paragraph = gate.querySelector(".auth-heading p");
-      const submit = setup.querySelector('button[type="submit"], button:not([type])');
-      if (eyebrow) eyebrow.textContent = "Acesso seguro";
-      if (title) title.textContent = "Entrar ou criar sua conta";
-      if (paragraph) paragraph.textContent = "Use seu e-mail e senha. Se este computador ainda não estiver cadastrado, seus ambientes autorizados serão vinculados automaticamente.";
-      if (submit) submit.textContent = "Continuar";
+      setText(gate.querySelector(".auth-heading span"), "Acesso seguro");
+      setText(gate.querySelector(".auth-heading h2"), "Entrar ou criar sua conta");
+      setText(gate.querySelector(".auth-heading p"), "Use seu e-mail e senha. Se este computador ainda não estiver cadastrado, seus ambientes autorizados serão vinculados automaticamente.");
+      setText(setup.querySelector('button[type="submit"], button:not([type])'), "Continuar");
     }
 
     const cloudCard = [...document.querySelectorAll(".security-card")].find((card) => card.textContent.includes("Identidade em nuvem"));
     if (cloudCard) {
-      const strong = cloudCard.querySelector("strong");
-      if (strong) strong.textContent = window.FSCloudRuntime.isAuthenticated() ? "Conectada" : (navigator.onLine ? "Login necessário" : "Offline");
+      setText(cloudCard.querySelector("strong"), window.FSCloudRuntime.isAuthenticated() ? "Conectada" : (navigator.onLine ? "Login necessário" : "Offline"));
     }
   }
 
   function installOwnerWorkspaceCreator() {
     if (!cloudReady()) return;
-    if (document.getElementById("workspaceForm")) return;
-    if (document.getElementById("cloudOwnerWorkspacePanel")) return;
+    if (document.getElementById("workspaceForm") || document.getElementById("cloudOwnerWorkspacePanel")) return;
     const view = document.getElementById("view");
     if (!view || document.getElementById("pageTitle")?.textContent !== "Usuários & Acessos") return;
     const roleText = document.querySelector(".identity-user small")?.textContent?.trim();
@@ -66,7 +65,10 @@
       const message = document.getElementById("cloudWorkspaceMsg");
       const name = new FormData(event.currentTarget).get("name")?.toString().trim();
       if (!name) return;
-      if (message) message.textContent = "Criando ambiente...";
+      if (message) {
+        message.classList.remove("error");
+        setText(message, "Criando ambiente...");
+      }
       try {
         const status = await invoke("auth_create_workspace", { name });
         const activeId = status?.activeWorkspaceId;
@@ -81,20 +83,26 @@
           selector.value = activeId;
           selector.dispatchEvent(new Event("change", { bubbles: true }));
         }
-        if (message) message.textContent = "Ambiente criado e isolado com sucesso.";
+        setText(message, "Ambiente criado e isolado com sucesso.");
         event.currentTarget.reset();
       } catch (error) {
         if (message) {
-          message.textContent = error?.message || String(error);
+          setText(message, error?.message || String(error));
           message.classList.add("error");
         }
       }
     });
   }
 
+  let scheduled = false;
   const observer = new MutationObserver(() => {
-    replaceCopy(document.body);
-    installOwnerWorkspaceCreator();
+    if (scheduled) return;
+    scheduled = true;
+    queueMicrotask(() => {
+      scheduled = false;
+      replaceCopy(document.body);
+      installOwnerWorkspaceCreator();
+    });
   });
   observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
   replaceCopy(document.body);
