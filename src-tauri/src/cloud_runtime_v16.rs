@@ -372,7 +372,7 @@ fn local_rows(connection: &Connection, workspace_id: &str) -> Result<Vec<LocalSy
              FROM entities WHERE workspace_id=?1",
         )
         .map_err(|error| error.to_string())?;
-    statement
+    let rows = statement
         .query_map(params![workspace_id], |row| {
             Ok(LocalSyncEntity {
                 id: row.get(0)?,
@@ -387,7 +387,8 @@ fn local_rows(connection: &Connection, workspace_id: &str) -> Result<Vec<LocalSy
         })
         .map_err(|error| error.to_string())?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    Ok(rows)
 }
 
 async fn remote_rows(
