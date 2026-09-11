@@ -1,12 +1,13 @@
 [package]
 name = "financa-simples-desktop"
-version = "1.5.0"
+version = "1.6.0"
 description = "Aplicativo Windows offline-first do Finança Simples"
 authors = ["Finança Simples"]
 edition = "2021"
 
 [lib]
 name = "financa_simples_desktop"
+path = "src/lib_operational.rs"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -14,11 +15,18 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
-rusqlite = { version = "0.37", features = ["bundled"] }
+tauri-plugin-updater = "2"
+rusqlite = { version = "0.37", features = ["bundled-sqlcipher-vendored-openssl", "backup"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["clock"] }
+argon2 = "0.5"
+rand_core = { version = "0.6", features = ["getrandom"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "query", "rustls"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-dpapi = "0.2"
 
 [profile.release]
 codegen-units = 1

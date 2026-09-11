@@ -8,6 +8,7 @@ on:
     paths:
       - "src-tauri/**"
       - "desktop-dist/**"
+      - "supabase/**"
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/build-windows.yml"
@@ -17,6 +18,7 @@ on:
     paths:
       - "src-tauri/**"
       - "desktop-dist/**"
+      - "supabase/**"
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/build-windows.yml"
@@ -27,6 +29,11 @@ permissions:
 concurrency:
   group: windows-build-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  FINANCA_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+  TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+  TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
 jobs:
   windows:
@@ -54,7 +61,7 @@ jobs:
       - name: Instalar dependências
         run: npm ci
 
-      - name: Validar frontend financeiro embarcado
+      - name: Validar frontend, identidade, cloud e isolamento
         shell: pwsh
         run: |
           $required = @(
@@ -62,109 +69,113 @@ jobs:
             "desktop-dist/core-v14.js",
             "desktop-dist/app-v14.js",
             "desktop-dist/app-v15.js",
-            "desktop-dist/styles.css"
+            "desktop-dist/auth-v16.js",
+            "desktop-dist/auth-recovery-v16.js",
+            "desktop-dist/cloud-config.js",
+            "desktop-dist/cloud-runtime-v16.js",
+            "desktop-dist/styles.css",
+            "desktop-dist/security-v16.css",
+            "src-tauri/src/lib_operational.rs",
+            "src-tauri/src/cloud_runtime_v16.rs",
+            "src-tauri/src/security_v16.rs",
+            "supabase/migrations/001_identity_workspaces.sql",
+            "supabase/migrations/005_workspace_self_service_and_client_sync.sql",
+            "supabase/migrations/006_workspace_discovery_owner_identity.sql",
+            "supabase/functions/invite-user/index.ts",
+            "supabase/functions/manage-members/index.ts",
+            "supabase/functions/reset-password/index.ts"
           )
           foreach ($path in $required) {
-            if (-not (Test-Path $path)) {
-              throw "Arquivo obrigatório não encontrado: $path"
-            }
+            if (-not (Test-Path $path)) { throw "Arquivo obrigatório não encontrado: $path" }
           }
 
           node --check desktop-dist/core-v14.js
           node --check desktop-dist/app-v14.js
           node --check desktop-dist/app-v15.js
+          node --check desktop-dist/auth-v16.js
+          node --check desktop-dist/auth-recovery-v16.js
+          node --check desktop-dist/cloud-config.js
+          node --check desktop-dist/cloud-runtime-v16.js
 
           $index = Get-Content "desktop-dist/index.html" -Raw
           $core = Get-Content "desktop-dist/core-v14.js" -Raw
           $app = Get-Content "desktop-dist/app-v14.js" -Raw
           $pro = Get-Content "desktop-dist/app-v15.js" -Raw
-          $styles = Get-Content "desktop-dist/styles.css" -Raw
-          $frontend = "$index`n$core`n$app`n$pro`n$styles"
+          $auth = Get-Content "desktop-dist/auth-v16.js" -Raw
+          $cloudConfig = Get-Content "desktop-dist/cloud-config.js" -Raw
+          $cloudClient = Get-Content "desktop-dist/cloud-runtime-v16.js" -Raw
+          $rust = Get-Content "src-tauri/src/lib_operational.rs" -Raw
+          $rustCloud = Get-Content "src-tauri/src/cloud_runtime_v16.rs" -Raw
+          $rustSecurity = Get-Content "src-tauri/src/security_v16.rs" -Raw
+          $cargo = Get-Content "src-tauri/Cargo.toml" -Raw
+          $migration = Get-Content "supabase/migrations/001_identity_workspaces.sql" -Raw
+          $frontend = "$index`n$core`n$app`n$pro`n$auth`n$cloudConfig`n$cloudClient"
+          $backend = "$rust`n$rustCloud`n$rustSecurity`n$cargo"
 
-          if ($frontend -match "window.location.replace") {
-            throw "O aplicativo voltou a depender de redirecionamento remoto."
-          }
+          if ($frontend -match "window.location.replace") { throw "O aplicativo voltou a depender de redirecionamento remoto." }
 
-          $forbidden = @(
-            "Produtos & Precificação",
-            "Produtos e precificação",
-            "Gestão de funcionários",
-            "Funcionários",
-            "Estoque",
-            "payrollTotal",
-            "inventoryValue",
-            "productRecommendedPrice"
-          )
+          $forbidden = @("Produtos & Precificação","Produtos e precificação","Gestão de funcionários","Funcionários","Estoque","payrollTotal","inventoryValue","productRecommendedPrice")
           foreach ($term in $forbidden) {
-            if ($frontend -match [regex]::Escape($term)) {
-              throw "Escopo incorreto detectado no Finança Simples: $term"
-            }
+            if ($frontend -match [regex]::Escape($term)) { throw "Escopo incorreto detectado no Finança Simples: $term" }
           }
 
-          $requiredLabels = @(
-            "Dashboard",
-            "Lançamentos",
-            "Contas & Cartões",
-            "Dashboard Analítico",
-            "Open Finance",
-            "Investimentos",
-            "Parametrização"
-          )
+          $requiredLabels = @("Dashboard","Lançamentos","Contas & Cartões","Dashboard Analítico","Open Finance","Investimentos","Parametrização","Usuários & Acessos")
           foreach ($label in $requiredLabels) {
-            if ($frontend -notmatch [regex]::Escape($label)) {
-              throw "Módulo obrigatório ausente: $label"
-            }
+            if ($frontend -notmatch [regex]::Escape($label)) { throw "Módulo obrigatório ausente: $label" }
           }
 
-          $requiredFeatures = @(
-            "Nova saída",
-            "Nova entrada",
-            "Compra no cartão",
-            "installmentCount",
-            "saveRegularLaunch",
-            "saveCardLaunch",
-            "areaCategoryId",
-            "closingDay",
-            "dueDay",
-            "Faturas do próximo mês",
-            "Renda média mensal",
-            "openingBalanceCents",
-            "Banco 1",
-            "Banco 2",
-            "Dinheiro",
-            "upsert_entities",
-            "startupSplash",
-            "analysisStart",
-            "analysisEnd",
-            "Volumetria financeira",
-            "Composição do próximo mês",
-            "cleanProductCopy",
-            "removeReferenceColumn"
+          $requiredFinancial = @("Nova saída","Nova entrada","Compra no cartão","installmentCount","saveRegularLaunch","saveCardLaunch","areaCategoryId","closingDay","dueDay","Faturas do próximo mês","Renda média mensal","openingBalanceCents","Banco 1","Banco 2","Dinheiro","startupSplash","analysisStart","analysisEnd","Volumetria financeira","Composição do próximo mês")
+          foreach ($feature in $requiredFinancial) {
+            if ($frontend -notmatch [regex]::Escape($feature)) { throw "Funcionalidade financeira obrigatória ausente: $feature" }
+          }
+
+          $requiredSecurity = @(
+            "auth_setup_owner","auth_login","auth_logout","auth_switch_workspace","auth_create_workspace",
+            "auth_create_or_grant_user","auth_update_member_permissions","auth_remove_member","auth_change_password",
+            "workspace_id","Argon2","audit_log","openFinance","investments","check_and_install_update",
+            "FINANCA_UPDATER_PUBLIC_KEY","cloud_reconcile_login","cloud_sync","SQLCipher","DPAPI","sqlcipher_export",
+            "create_consistent_backup","bundled-sqlcipher-vendored-openssl"
           )
-          foreach ($feature in $requiredFeatures) {
-            if ($frontend -notmatch [regex]::Escape($feature)) {
-              throw "Funcionalidade financeira obrigatória ausente: $feature"
-            }
+          foreach ($feature in $requiredSecurity) {
+            if (($backend + "`n" + $auth + "`n" + $cloudClient) -notmatch [regex]::Escape($feature)) { throw "Fundação de segurança ausente: $feature" }
           }
 
-          if ($app -match "Cadastre uma conta antes de lançar movimentos") {
-            throw "Conta bancária voltou a ser pré-requisito para lançamentos."
-          }
+          if ($cloudConfig -match 'service_role\s*[:=]\s*["'']?[A-Za-z0-9_.-]{20,}') { throw "Service role do Supabase foi exposto no frontend." }
+          if ($cloudConfig -match 'sb_secret_') { throw "Chave secreta moderna do Supabase foi exposta no frontend." }
+          if ($backend -notmatch "password_hash" -or $backend -notmatch "hash_password") { throw "Senha offline não está protegida por hash." }
+          if ($backend -match "password\s+TEXT\s+NOT NULL") { throw "Campo de senha em texto claro detectado." }
+          if ($migration -notmatch "enable row level security" -or $migration -notmatch "fs_can") { throw "RLS/permissões multi-tenant ausentes." }
+          if ($index -notmatch "cloud-runtime-v16.js" -or $index -notmatch "auth-v16.js") { throw "Camada cloud/autenticação 1.6 não está carregada." }
+          if ($cloudClient -notmatch "grant_type=password" -or $cloudClient -notmatch "cloud_reconcile_login" -or $cloudClient -notmatch "manage-members") { throw "Login Supabase ou gestão cloud não está ativa no cliente." }
+          if ($rustSecurity -notmatch "Scope::User") { throw "Chave SQLCipher não está protegida no escopo do usuário Windows." }
 
-          if ($index -notmatch "app-v15.js") {
-            throw "Camada profissional 1.5 não está carregada no aplicativo."
-          }
+          Write-Host "Frontend/backend 1.6 validados: finanças, Supabase Auth, workspaces, sync, SQLCipher/DPAPI, RLS e updater seguro."
 
-          Write-Host "Frontend validado: operação financeira, dashboard analítico por período, gráficos, composição do próximo mês e splash de abertura."
-
-      - name: Testar banco local e relações financeiras
+      - name: Testar banco local, autenticação e relações financeiras
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib
 
       - name: Verificar núcleo Rust
         run: cargo check --manifest-path src-tauri/Cargo.toml
 
       - name: Compilar instalador NSIS
-        run: npm run build -- --config src-tauri/tauri.unsigned.conf.json --bundles nsis
+        shell: pwsh
+        run: |
+          $canSign = ($env:GITHUB_EVENT_NAME -ne "pull_request") -and `
+                     (-not [string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) -and `
+                     (-not [string]::IsNullOrWhiteSpace($env:FINANCA_UPDATER_PUBLIC_KEY))
+
+          if ($canSign) {
+            Write-Host "Build de produção com artefatos assinados para atualização automática."
+            npm run build -- --config src-tauri/tauri.signed.conf.json --bundles nsis
+            "SIGNED_UPDATE=true" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          } else {
+            Write-Host "Build sem assinatura de updater. Auto-update permanecerá desativado nesta compilação."
+            Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY -ErrorAction SilentlyContinue
+            Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD -ErrorAction SilentlyContinue
+            Remove-Item Env:FINANCA_UPDATER_PUBLIC_KEY -ErrorAction SilentlyContinue
+            npm run build -- --config src-tauri/tauri.unsigned.conf.json --bundles nsis
+            "SIGNED_UPDATE=false" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          }
 
       - name: Smoke test do executável
         shell: pwsh
@@ -173,13 +184,21 @@ jobs:
           $process = Start-Process -FilePath $exe -PassThru
           Start-Sleep -Seconds 15
           $process.Refresh()
-
-          if ($process.HasExited) {
-            throw "O Finança Simples encerrou durante a inicialização. ExitCode=$($process.ExitCode)"
-          }
-
+          if ($process.HasExited) { throw "O Finança Simples encerrou durante a inicialização. ExitCode=$($process.ExitCode)" }
           Stop-Process -Id $process.Id -Force
           Write-Host "Smoke test aprovado: aplicativo permaneceu aberto por 15 segundos."
+
+      - name: Validar assinatura de updater quando habilitada
+        if: env.SIGNED_UPDATE == 'true'
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem "src-tauri/target/release/bundle/nsis/*.exe" | Select-Object -First 1
+          if (-not $installer) { throw "Instalador NSIS não encontrado." }
+          $sigPath = "$($installer.FullName).sig"
+          if (-not (Test-Path $sigPath)) { throw "Build marcada como assinada, mas o arquivo .sig não foi gerado." }
+          $signature = (Get-Content $sigPath -Raw).Trim()
+          if ([string]::IsNullOrWhiteSpace($signature)) { throw "Assinatura do updater está vazia." }
+          Write-Host "Artefato de atualização possui assinatura Tauri."
 
       - name: Publicar instalador como artefato
         uses: actions/upload-artifact@v4
@@ -189,39 +208,48 @@ jobs:
           retention-days: 30
           path: |
             src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/nsis/*.sig
             src-tauri/target/release/financa-simples-desktop.exe
 
-      - name: Publicar pré-release para download direto
+      - name: Publicar pré-release e manifesto de atualização
         if: github.event_name != 'pull_request'
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $installer = Get-ChildItem "src-tauri/target/release/bundle/nsis/*.exe" | Select-Object -First 1
-          if (-not $installer) {
-            throw "Instalador NSIS não encontrado."
-          }
-
+          $sourceInstaller = Get-ChildItem "src-tauri/target/release/bundle/nsis/*.exe" | Select-Object -First 1
+          if (-not $sourceInstaller) { throw "Instalador NSIS não encontrado." }
+          $assetName = "Financa-Simples-Windows-x64-Setup.exe"
+          $assetPath = Join-Path $env:RUNNER_TEMP $assetName
+          Copy-Item $sourceInstaller.FullName $assetPath -Force
           git tag -f desktop-preview $env:GITHUB_SHA
           git push origin desktop-preview --force
-
-          $notes = "Build Windows 1.5: dashboard analítico com filtro por período, gráficos de entradas, saídas e faturas, composição do próximo mês, indicadores de organização financeira, tela de abertura com marca por 5 segundos, lançamentos, contas, cartões, parcelas, investimentos, SQLite local, backup e importação CSV."
-
+          $notes = "Finança Simples 1.6: autenticação Supabase por e-mail e senha, workspaces isolados, permissões por módulo, sincronização offline-first, banco SQLCipher protegido pelo Windows, backup consistente e atualização assinada quando habilitada."
           gh release view desktop-preview 2>$null
           if ($LASTEXITCODE -ne 0) {
-            gh release create desktop-preview $installer.FullName `
-              --prerelease `
-              --title "Finança Simples para Windows" `
-              --notes $notes
+            gh release create desktop-preview $assetPath --prerelease --title "Finança Simples para Windows" --notes $notes
           } else {
             $oldAssets = gh release view desktop-preview --json assets --jq '.assets[].name'
             foreach ($asset in $oldAssets) {
-              if ($asset -like "*.exe") {
-                gh release delete-asset desktop-preview $asset -y
-              }
+              if ($asset -like "*.exe" -or $asset -like "*.sig" -or $asset -eq "latest.json") { gh release delete-asset desktop-preview $asset -y }
             }
-            gh release upload desktop-preview $installer.FullName
-            gh release edit desktop-preview `
-              --title "Finança Simples para Windows" `
-              --notes $notes
+            gh release upload desktop-preview $assetPath --clobber
+            gh release edit desktop-preview --title "Finança Simples para Windows" --notes $notes
+          }
+          if ($env:SIGNED_UPDATE -eq "true") {
+            $sourceSig = "$($sourceInstaller.FullName).sig"
+            if (-not (Test-Path $sourceSig)) { throw "Assinatura Tauri não encontrada para publicar o auto-update." }
+            $sigAssetName = "$assetName.sig"
+            $sigAssetPath = Join-Path $env:RUNNER_TEMP $sigAssetName
+            Copy-Item $sourceSig $sigAssetPath -Force
+            $signature = (Get-Content $sourceSig -Raw).Trim()
+            $version = (Get-Content "package.json" -Raw | ConvertFrom-Json).version
+            $downloadUrl = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/desktop-preview/$assetName"
+            $latest = @{version=$version;notes=$notes;pub_date=(Get-Date).ToUniversalTime().ToString("o");platforms=@{"windows-x86_64"=@{signature=$signature;url=$downloadUrl}}} | ConvertTo-Json -Depth 6
+            $latestPath = Join-Path $env:RUNNER_TEMP "latest.json"
+            Set-Content -Path $latestPath -Value $latest -Encoding utf8
+            gh release upload desktop-preview $sigAssetPath $latestPath --clobber
+            Write-Host "Manifesto latest.json publicado com assinatura válida."
+          } else {
+            Write-Host "Sem chave de assinatura: instalador publicado, mas latest.json não foi publicado."
           }
