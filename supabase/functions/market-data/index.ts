@@ -6,7 +6,8 @@ type Membership = { role?: string; permissions?: Record<string, Record<string, b
 type SeriesKey = keyof typeof SERIES
 
 const SERIES = {
-  dollar: { label: 'Dólar comercial (compra)', code: 1, suffix: 'R$' },
+  // SGS 1 é dólar de venda, conforme o catálogo de dados abertos do BCB.
+  dollar: { label: 'Dólar comercial (venda)', code: 1, suffix: 'R$' },
   selic: { label: 'Meta Selic', code: 432, suffix: '% a.a.' },
   ipca: { label: 'IPCA mensal', code: 433, suffix: '% a.m.' },
 } as const
@@ -53,7 +54,7 @@ async function fetchSeries(key: SeriesKey) {
     const rows = await response.json() as Array<{ data?: string; valor?: string }>
     const latest = rows[0]
     const value = Number(String(latest?.valor ?? '').replace(',', '.'))
-    if (!latest?.data || !Number.isFinite(value)) throw new Error('invalid_bcb_response')
+    if (!latest?.data || latest.valor == null || String(latest.valor).trim() === '' || !Number.isFinite(value)) throw new Error('invalid_bcb_response')
     return { key, label: config.label, value, suffix: config.suffix, referenceDate: latest.data, sourceUrl, stale: false }
   } catch {
     return { key, label: config.label, value: null, suffix: config.suffix, referenceDate: '', sourceUrl, stale: true }
@@ -68,6 +69,7 @@ Deno.serve(async (request: Request) => {
     const workspaceId = String(body.workspaceId ?? '')
     if (!await authorize(request, workspaceId, 'view')) return respond({ error: 'forbidden' }, 403)
     const indicators = await Promise.all((Object.keys(SERIES) as SeriesKey[]).map(fetchSeries))
+    if (indicators.every((item) => item.value === null)) return respond({ error: 'market_data_unavailable', indicators }, 503)
     return respond({ source: 'Banco Central do Brasil', checkedAt: new Date().toISOString(), indicators })
   } catch (error) {
     console.error('market-data', error)

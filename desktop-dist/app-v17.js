@@ -14,6 +14,7 @@
     .replaceAll('"', "&quot;").replaceAll("'", "&#039;");
   const formObject = (form) => Object.fromEntries(new FormData(form).entries());
   const state = {
+    workspaceKey: null,
     investmentTab: "portfolio",
     investmentEdit: "",
     goalEdit: "",
@@ -28,7 +29,13 @@
   };
 
   const cloud = () => window.FSCloudRuntime;
-  const workspaceId = () => $("workspaceSelector")?.value || "";
+  const workspaceId = () => window.FSAuth?.workspaceId?.() || $("workspaceSelector")?.value || "";
+  const can = (module, action) => !window.FSAuth || window.FSAuth.can(module, action);
+  function workspaceOperation() {
+    const id = workspaceId();
+    const release = window.FSAuth?.lockWorkspace?.() || (() => {});
+    return { id, release, assertCurrent() { if (workspaceId() !== id) throw new Error("O ambiente foi alterado. Refaça a operação no ambiente correto."); } };
+  }
   const canUseCloud = () => Boolean(navigator.onLine && cloud()?.isAuthenticated?.() && workspaceId());
   const latest = (rows) => rows.reduce((max, item) => String(item._updatedAt || item.syncedAt || "") > max ? String(item._updatedAt || item.syncedAt || "") : max, "");
   const dateLabel = (value) => value ? new Date(`${String(value).slice(0, 10)}T12:00:00`).toLocaleDateString("pt-BR") : "—";
@@ -47,7 +54,7 @@
 
   function investmentSummary() {
     const base = investmentMetrics();
-    const liquid = investments().filter((item) => Number(item.liquidityDays || 0) <= 1)
+    const liquid = investments().filter((item) => item.liquidityDays != null && item.liquidityDays !== "" && Number(item.liquidityDays) <= 1)
       .reduce((sum, item) => sum + Math.round(Number(item.quantity || 0) * Number(item.currentPriceCents || 0)), 0);
     return { ...base, liquidShare: base.current ? liquid / base.current * 100 : 0 };
   }
@@ -56,11 +63,11 @@
     const order = ["dollar", "selic", "ipca"];
     const byKey = new Map(marketData().map((item) => [item.key, item]));
     const fallback = {
-      dollar: { label: "Dólar comercial (compra)", suffix: "R$" },
+      dollar: { label: "Dólar comercial (venda)", suffix: "R$" },
       selic: { label: "Meta Selic", suffix: "% a.a." },
       ipca: { label: "IPCA mensal", suffix: "% a.m." },
     };
-    return `<section class="panel market-panel"><div class="panel-head"><div><h3>Indicadores oficiais</h3><small>Atualizados no servidor a partir do Banco Central do Brasil; a última leitura fica disponível offline.</small></div><button class="ghost" data-v17-action="refresh-market" ${state.marketBusy || !canUseCloud() ? "disabled" : ""}>${state.marketBusy ? "Atualizando..." : "Atualizar"}</button></div><div class="market-grid">${order.map((key) => {
+    return `<section class="panel market-panel"><div class="panel-head"><div><h3>Indicadores oficiais</h3><small>Atualizados no servidor a partir do Banco Central do Brasil; a última leitura fica disponível offline.</small></div><button class="ghost" data-v17-action="refresh-market" ${state.marketBusy || !canUseCloud() || !can("investments", "create") || !can("investments", "edit") ? "disabled" : ""}>${state.marketBusy ? "Atualizando..." : "Atualizar"}</button></div><div class="market-grid">${order.map((key) => {
       const item = byKey.get(key);
       const meta = item || fallback[key];
       const value = item ? (key === "dollar" ? `R$ ${Number(item.value || 0).toFixed(4).replace(".", ",")}` : `${Number(item.value || 0).toFixed(2).replace(".", ",")}%`) : "—";
@@ -70,7 +77,7 @@
 
   function investmentForm() {
     const item = state.investmentEdit ? investments().find((row) => row.id === state.investmentEdit) : null;
-    return `<section class="panel"><div class="panel-head"><div><h3>${item ? "Editar posição" : "Nova posição"}</h3><small>Valores manuais da sua carteira; nenhum ativo é comprado pelo aplicativo.</small></div>${item ? `<button class="ghost" data-v17-action="cancel-investment">Cancelar</button>` : ""}</div><form id="investmentV17Form" class="form panel-body"><div class="form-grid">
+    return `<section class="panel"><div class="panel-head"><div><h3>${item ? "Editar posição" : "Nova posição"}</h3><small>Valores manuais da sua carteira; nenhum ativo é comprado pelo aplicativo.</small></div>${item ? `<button class="ghost" data-v17-action="cancel-investment">Cancelar</button>` : ""}</div><form id="investmentV17Form" data-editing="${Boolean(item)}" class="form panel-body"><div class="form-grid">
       <label>Tipo<select name="type">${INVESTMENT_TYPES.map((type) => `<option ${item?.type === type ? "selected" : ""}>${esc(type)}</option>`).join("")}</select></label>
       <label>Ativo / nome*<input name="name" required maxlength="120" value="${esc(item?.name || "")}"></label>
       <label>Instituição<input name="institution" maxlength="120" value="${esc(item?.institution || "")}"></label>
@@ -78,7 +85,7 @@
       <label>Quantidade<input name="quantity" type="number" min="0" step="0.00000001" value="${item?.quantity ?? 1}"></label>
       <label>Preço médio<input name="averagePrice" inputmode="decimal" value="${item ? inputMoney(item.averagePriceCents) : ""}" placeholder="0,00"></label>
       <label>Preço atual<input name="currentPrice" inputmode="decimal" value="${item ? inputMoney(item.currentPriceCents) : ""}" placeholder="0,00"></label>
-      <label>Liquidez (dias)<input name="liquidityDays" type="number" min="0" max="36500" value="${Number(item?.liquidityDays || 0)}"></label>
+      <label>Liquidez (dias)<input name="liquidityDays" type="number" min="0" max="36500" value="${item?.liquidityDays ?? ""}" placeholder="Não informada"></label>
       <label>Taxa anual estimada (%)<input name="annualRate" inputmode="decimal" value="${item?.annualRateBps ? (Number(item.annualRateBps) / 100).toFixed(2).replace(".", ",") : ""}" placeholder="0,00"></label>
       <label>Vencimento<input name="maturityDate" type="date" value="${esc(item?.maturityDate || "")}"></label>
     </div><div class="button-row"><button class="primary">Salvar posição</button></div></form></section>`;
@@ -90,14 +97,14 @@
       const cost = Math.round(Number(item.quantity || 0) * Number(item.averagePriceCents || 0));
       const current = Math.round(Number(item.quantity || 0) * Number(item.currentPriceCents || 0));
       const gain = current - cost;
-      return `<tr><td><strong>${esc(item.name)}</strong>${item.ticker ? `<small class="table-sub">${esc(item.ticker)}</small>` : ""}</td><td>${esc(item.type || "Outro")}</td><td>${esc(item.institution || "—")}</td><td>${Number(item.liquidityDays || 0) <= 1 ? "Diária" : `${Number(item.liquidityDays)} dias`}</td><td class="right">${esc(money(cost))}</td><td class="right">${esc(money(current))}</td><td class="right ${gain >= 0 ? "income" : "expense"}">${gain >= 0 ? "+" : "−"}${esc(money(Math.abs(gain)))}</td><td class="actions-cell"><button class="ghost compact" data-v17-action="edit-investment" data-id="${esc(item.id)}">Editar</button><button class="ghost compact danger" data-v17-action="delete-investment" data-id="${esc(item.id)}">Excluir</button></td></tr>`;
+      return `<tr><td><strong>${esc(item.name)}</strong>${item.ticker ? `<small class="table-sub">${esc(item.ticker)}</small>` : ""}</td><td>${esc(item.type || "Outro")}</td><td>${esc(item.institution || "—")}</td><td>${item.liquidityDays == null || item.liquidityDays === "" ? "Não informada" : Number(item.liquidityDays) <= 1 ? "Diária" : `${Number(item.liquidityDays)} dias`}</td><td class="right">${esc(money(cost))}</td><td class="right">${esc(money(current))}</td><td class="right ${gain >= 0 ? "income" : "expense"}">${gain >= 0 ? "+" : "−"}${esc(money(Math.abs(gain)))}</td><td class="actions-cell"><button class="ghost compact" data-v17-action="edit-investment" data-id="${esc(item.id)}">Editar</button><button class="ghost compact danger" data-v17-action="delete-investment" data-id="${esc(item.id)}">Excluir</button></td></tr>`;
     }).join("") : `<tr><td colspan="8" class="empty">Nenhuma posição cadastrada.</td></tr>`}</tbody></table></div></section>`;
   }
 
   function goalsPanel() {
     const editing = state.goalEdit ? investmentGoals().find((row) => row.id === state.goalEdit) : null;
     const rows = [...investmentGoals()].sort((a, b) => String(a.targetDate || "9999").localeCompare(String(b.targetDate || "9999")));
-    return `<div class="two-col goal-layout"><section class="panel"><div class="panel-head"><div><h3>${editing ? "Editar meta" : "Nova meta financeira"}</h3><small>Acompanhe reserva, entrada, viagem ou outro objetivo.</small></div>${editing ? `<button class="ghost" data-v17-action="cancel-goal">Cancelar</button>` : ""}</div><form id="goalV17Form" class="form panel-body"><div class="form-grid"><label class="wide">Nome da meta*<input name="name" required maxlength="120" value="${esc(editing?.name || "")}"></label><label>Valor-alvo<input name="target" required inputmode="decimal" value="${editing ? inputMoney(editing.targetCents) : ""}" placeholder="0,00"></label><label>Valor acumulado<input name="current" inputmode="decimal" value="${editing ? inputMoney(editing.currentCents) : ""}" placeholder="0,00"></label><label class="wide">Prazo<input name="targetDate" type="date" required value="${esc(editing?.targetDate || "")}"></label></div><button class="primary">Salvar meta</button></form></section><section class="panel"><div class="panel-head"><div><h3>Metas</h3><small>Progresso dos objetivos cadastrados.</small></div></div><div class="goals-list">${rows.length ? rows.map((goal) => {
+    return `<div class="two-col goal-layout"><section class="panel"><div class="panel-head"><div><h3>${editing ? "Editar meta" : "Nova meta financeira"}</h3><small>Acompanhe reserva, entrada, viagem ou outro objetivo.</small></div>${editing ? `<button class="ghost" data-v17-action="cancel-goal">Cancelar</button>` : ""}</div><form id="goalV17Form" data-editing="${Boolean(editing)}" class="form panel-body"><div class="form-grid"><label class="wide">Nome da meta*<input name="name" required maxlength="120" value="${esc(editing?.name || "")}"></label><label>Valor-alvo<input name="target" required inputmode="decimal" value="${editing ? inputMoney(editing.targetCents) : ""}" placeholder="0,00"></label><label>Valor acumulado<input name="current" inputmode="decimal" value="${editing ? inputMoney(editing.currentCents) : ""}" placeholder="0,00"></label><label class="wide">Prazo<input name="targetDate" type="date" required value="${esc(editing?.targetDate || "")}"></label></div><button class="primary">Salvar meta</button></form></section><section class="panel"><div class="panel-head"><div><h3>Metas</h3><small>Progresso dos objetivos cadastrados.</small></div></div><div class="goals-list">${rows.length ? rows.map((goal) => {
       const progress = Number(goal.targetCents || 0) ? Math.min(100, Number(goal.currentCents || 0) / Number(goal.targetCents) * 100) : 0;
       return `<article class="goal-card"><div><strong>${esc(goal.name)}</strong><span>${esc(money(goal.currentCents))} de ${esc(money(goal.targetCents))}</span></div><div class="goal-progress"><i style="width:${progress}%"></i></div><div><small>${esc(pct(progress))} · prazo ${esc(dateLabel(goal.targetDate))}</small><span><button class="ghost compact" data-v17-action="edit-goal" data-id="${esc(goal.id)}">Editar</button><button class="ghost compact danger" data-v17-action="delete-goal" data-id="${esc(goal.id)}">Excluir</button></span></div></article>`;
     }).join("") : `<div class="empty">Nenhuma meta cadastrada.</div>`}</div></section></div>`;
@@ -140,15 +147,15 @@
   }
 
   function simulatorsPanel() {
-    const selic = Number(marketData().find((item) => item.key === "selic")?.value || 12);
-    return `<section class="panel simulator-panel"><div class="panel-head"><div><h3>Simuladores financeiros</h3><small>Investimentos, empréstimos, financiamentos e consórcios.</small></div></div><div class="simulator-grid panel-body"><form id="simulatorV17Form" class="form"><label>Simulação<select name="kind"><option value="investment">Investimento</option><option value="loan">Empréstimo</option><option value="financing">Financiamento</option><option value="consortium">Consórcio</option></select></label><label>Valor inicial / crédito<input name="principal" value="10.000,00" inputmode="decimal"></label><label>Aporte mensal / entrada<input name="monthly" value="500,00" inputmode="decimal"></label><label>Prazo (meses)<input name="months" type="number" min="1" value="24"></label><label>Taxa efetiva anual (%)<input name="rate" value="${selic.toFixed(2).replace(".", ",")}" inputmode="decimal"></label><label class="sim-fee hidden">Taxa de administração total (%)<input name="fee" value="18,00" inputmode="decimal"></label></form><div id="simulatorV17Result" class="simulator-result"></div></div><p class="legal-note simulator-note">Estimativa matemática. Confirme CET, impostos, seguros, reajustes e condições contratuais antes de decidir.</p></section>`;
+    const selic = Number(marketData().find((item) => item.key === "selic")?.value ?? 0);
+    return `<section class="panel simulator-panel"><div class="panel-head"><div><h3>Simuladores financeiros</h3><small>Investimentos, empréstimos, financiamentos e consórcios. A taxa é uma hipótese editável, não uma previsão de retorno.</small></div></div><div class="simulator-grid panel-body"><form id="simulatorV17Form" class="form"><label>Simulação<select name="kind"><option value="investment">Investimento</option><option value="loan">Empréstimo</option><option value="financing">Financiamento</option><option value="consortium">Consórcio</option></select></label><label>Valor inicial / crédito<input name="principal" value="10.000,00" inputmode="decimal"></label><label>Aporte mensal / entrada<input name="monthly" value="500,00" inputmode="decimal"></label><label>Prazo (meses)<input name="months" type="number" min="1" max="1200" step="1" value="24"></label><label>Taxa efetiva anual (%)<input name="rate" value="${selic.toFixed(2).replace(".", ",")}" inputmode="decimal"></label><label class="sim-fee hidden">Taxa de administração total (%)<input name="fee" value="18,00" inputmode="decimal"></label></form><div id="simulatorV17Result" class="simulator-result"></div></div><p class="legal-note simulator-note">Estimativa matemática. Confirme CET, impostos, seguros, reajustes e condições contratuais antes de decidir.</p></section>`;
   }
 
   function renderInvestments(force = false) {
     if (S.page !== "investments") return;
     const view = $("view");
     if (!view) return;
-    const signature = [state.investmentTab, state.investmentEdit, state.goalEdit, state.marketBusy, state.message, investments().length, investmentGoals().length, marketData().length, latest(investments()), latest(investmentGoals()), latest(marketData())].join("|");
+    const signature = [workspaceId(), navigator.onLine, canUseCloud(), S.month, JSON.stringify(S.settings), state.investmentTab, state.investmentEdit, state.goalEdit, state.marketBusy, state.message, investments().length, investmentGoals().length, marketData().length, latest(investments()), latest(investmentGoals()), latest(marketData())].join("|");
     if (!force && view.dataset.advancedV17 === `investments:${signature}`) return;
     view.dataset.advancedV17 = `investments:${signature}`;
     const m = investmentSummary();
@@ -166,30 +173,35 @@
   }
 
   async function refreshMarket(manual = false) {
-    if (!canUseCloud() || state.marketBusy) {
+    if (!canUseCloud() || state.marketBusy || !can("investments", "create") || !can("investments", "edit")) {
       if (manual) { setMessage("Entre com a conta online para atualizar os indicadores.", true); renderInvestments(true); }
       return;
     }
+    const operation = workspaceOperation();
     state.marketBusy = true; setMessage(manual ? "Consultando o Banco Central..." : "", false); renderInvestments(true);
     try {
-      const result = await cloud().edge("market-data", { workspaceId: workspaceId() });
-      for (const item of result.indicators || []) {
+      const result = await cloud().edge("market-data", { workspaceId: operation.id });
+      operation.assertCurrent();
+      const valid = (result.indicators || []).filter((item) => item.value != null && Number.isFinite(Number(item.value)));
+      if (!valid.length) throw new Error("O Banco Central não retornou indicadores válidos. Os valores anteriores foram preservados.");
+      for (const item of valid) {
         if (item.value == null) continue;
         const existing = marketData().find((row) => row.key === item.key);
         await save("market_data", { ...item, checkedAt: result.checkedAt, source: result.source }, existing?.id || null);
       }
-      await reloadInvestments("Indicadores oficiais atualizados.");
+      await reloadInvestments(valid.length === 3 ? "Indicadores oficiais atualizados." : `${valid.length} de 3 indicadores atualizados. Os demais mantêm a leitura anterior.`);
     } catch (error) {
       await reloadInvestments(friendlyCloudError(error), true);
     } finally {
       state.marketBusy = false;
+      operation.release();
       renderInvestments(true);
     }
   }
 
   function autoRefreshMarket() {
     const id = workspaceId();
-    if (!id || state.marketAttemptedWorkspace === id || !canUseCloud()) return;
+    if (!id || state.marketAttemptedWorkspace === id || !canUseCloud() || !can("investments", "create") || !can("investments", "edit")) return;
     const freshest = marketData().reduce((max, item) => Math.max(max, Date.parse(item.checkedAt || item._updatedAt || 0) || 0), 0);
     if (freshest && Date.now() - freshest < 20 * 60 * 60 * 1000) return;
     state.marketAttemptedWorkspace = id;
@@ -210,14 +222,26 @@
       event.preventDefault();
       const values = formObject(event.currentTarget);
       try {
+        if (!can("investments", state.investmentEdit ? "edit" : "create")) throw new Error("Sem permissão para salvar posições.");
+        if (!String(values.name || "").trim()) throw new Error("Informe o nome do ativo.");
+        const quantity = Number(values.quantity);
+        const currentPriceCents = String(values.currentPrice || "").trim() === "" ? parseMoney(values.averagePrice) : parseMoney(values.currentPrice);
+        const liquidityDays = String(values.liquidityDays ?? "").trim() === "" ? null : Number(values.liquidityDays);
+        const annualRateBps = Math.round(Number(String(values.annualRate || "0").replace(",", ".")) * 100);
         if (parseMoney(values.averagePrice) <= 0) throw new Error("Informe um preço médio maior que zero.");
-        await save("investments", { type: values.type, name: String(values.name).trim(), institution: String(values.institution || "").trim(), ticker: String(values.ticker || "").trim().toUpperCase(), quantity: Math.max(0, Number(values.quantity || 0)), averagePriceCents: parseMoney(values.averagePrice), currentPriceCents: parseMoney(values.currentPrice) || parseMoney(values.averagePrice), liquidityDays: Math.max(0, Number(values.liquidityDays || 0)), annualRateBps: Math.max(0, Math.round(Number(String(values.annualRate || "0").replace(",", ".")) * 100)), maturityDate: values.maturityDate || "", date: today(), source: "manual" }, state.investmentEdit || null);
+        if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isSafeInteger(Math.round(quantity * parseMoney(values.averagePrice)))) throw new Error("Informe uma quantidade válida maior que zero.");
+        if (currentPriceCents < 0 || !Number.isSafeInteger(Math.round(quantity * currentPriceCents))) throw new Error("Informe um preço atual válido e não negativo.");
+        if (liquidityDays !== null && (!Number.isInteger(liquidityDays) || liquidityDays < 0 || liquidityDays > 36500)) throw new Error("Informe a liquidez em dias inteiros ou deixe em branco.");
+        if (!Number.isFinite(annualRateBps) || annualRateBps < 0 || annualRateBps > 100000) throw new Error("Informe uma taxa válida entre 0% e 1000%.");
+        await save("investments", { type: values.type, name: String(values.name).trim(), institution: String(values.institution || "").trim(), ticker: String(values.ticker || "").trim().toUpperCase(), quantity, averagePriceCents: parseMoney(values.averagePrice), currentPriceCents, liquidityDays, annualRateBps, maturityDate: values.maturityDate || "", date: investments().find((row) => row.id === state.investmentEdit)?.date || today(), source: "manual" }, state.investmentEdit || null);
         state.investmentEdit = ""; await reloadInvestments("Posição salva com sucesso.");
       } catch (error) { setMessage(error.message || String(error), true); renderInvestments(true); }
     });
     $("goalV17Form")?.addEventListener("submit", async (event) => {
       event.preventDefault(); const values = formObject(event.currentTarget);
       try {
+        if (!can("investments", state.goalEdit ? "edit" : "create")) throw new Error("Sem permissão para salvar metas.");
+        if (!String(values.name || "").trim()) throw new Error("Informe o nome da meta.");
         const targetCents = parseMoney(values.target); if (targetCents <= 0) throw new Error("Informe um valor-alvo maior que zero.");
         await save("investment_goals", { name: String(values.name).trim(), targetCents, currentCents: Math.max(0, parseMoney(values.current)), targetDate: values.targetDate, createdAt: investmentGoals().find((row) => row.id === state.goalEdit)?.createdAt || new Date().toISOString() }, state.goalEdit || null);
         state.goalEdit = ""; await reloadInvestments("Meta salva com sucesso.");
@@ -244,30 +268,29 @@
     const v = formObject(form), kind = v.kind;
     form.querySelector(".sim-fee")?.classList.toggle("hidden", kind !== "consortium");
     form.querySelector('label:has(input[name="rate"])')?.classList.toggle("hidden", kind === "consortium");
-    const principal = parseMoney(v.principal) / 100, monthly = parseMoney(v.monthly) / 100, months = Math.max(1, Number(v.months || 1));
-    const annual = Math.max(0, Number(String(v.rate || "0").replace(",", "."))) / 100;
-    const monthlyRate = Math.pow(1 + annual, 1 / 12) - 1;
-    let label, value, detail;
-    if (kind === "investment") {
-      value = principal * Math.pow(1 + monthlyRate, months) + (monthlyRate ? monthly * (Math.pow(1 + monthlyRate, months) - 1) / monthlyRate : monthly * months);
-      label = "Valor projetado"; detail = `Total aportado: ${money(Math.round((principal + monthly * months) * 100))} · ganho bruto estimado: ${money(Math.round((value - principal - monthly * months) * 100))}`;
-    } else if (kind === "consortium") {
-      const total = principal * (1 + Math.max(0, Number(String(v.fee || "0").replace(",", "."))) / 100);
-      value = total / months; label = "Parcela média estimada"; detail = `Custo total estimado: ${money(Math.round(total * 100))}. Lance e reajustes não incluídos.`;
-    } else {
-      const financed = Math.max(0, principal - monthly);
-      value = monthlyRate ? financed * monthlyRate / (1 - Math.pow(1 + monthlyRate, -months)) : financed / months;
-      label = "Parcela estimada"; detail = `Total pago: ${money(Math.round((value * months + monthly) * 100))} · juros estimados: ${money(Math.round((value * months - financed) * 100))}`;
+    try {
+      const result = window.FSFinance.simulate({
+        kind, principalCents: parseMoney(v.principal), contributionCents: parseMoney(v.monthly),
+        months: Number(v.months), annualRatePercent: Number(String(v.rate || "0").replace(",", ".")),
+        feePercent: Number(String(v.fee || "0").replace(",", ".")),
+      });
+      const label = kind === "investment" ? "Valor projetado" : "Parcela estimada";
+      const detail = kind === "investment"
+        ? `Total aportado: ${money(result.contributedCents)} · ganho bruto estimado: ${money(result.interestCents)}. Aportes ao final de cada mês.`
+        : kind === "consortium" ? `Custo total estimado: ${money(result.totalCents)}. Lance, seguros e reajustes não incluídos.`
+        : `Total pago estimado: ${money(result.totalCents)} · juros estimados: ${money(result.interestCents)}. Pode haver ajuste de centavos na última parcela.`;
+      target.innerHTML = `<span>${esc(label)}</span><strong>${esc(money(result.valueCents))}</strong><p>${esc(detail)}</p>`;
+    } catch (error) {
+      target.innerHTML = `<p class="expense">${esc(error.message || String(error))}</p>`;
     }
-    target.innerHTML = `<span>${esc(label)}</span><strong>${esc(money(Math.round(value * 100)))}</strong><p>${esc(detail)}</p>`;
   }
 
   function openFinanceSummary() {
-    const accounts = openFinanceAccounts(), bills = openFinanceBills();
+    const accounts = openFinanceAccounts().filter((item) => !item.currency || item.currency === "BRL"), bills = openFinanceBills().filter((item) => !item.currency || item.currency === "BRL");
     return {
       bankBalance: accounts.filter((item) => item.type !== "CREDIT").reduce((sum, item) => sum + Number(item.balanceCents || 0), 0),
       creditUsed: accounts.filter((item) => item.type === "CREDIT").reduce((sum, item) => sum + Number(item.balanceCents || 0), 0),
-      openBills: bills.filter((item) => !["PAID", "CLOSED"].includes(String(item.status || "").toUpperCase())).reduce((sum, item) => sum + Number(item.totalAmountCents || 0), 0),
+      openBills: bills.filter((item) => String(item.status || "").toUpperCase() !== "PAID").reduce((sum, item) => sum + Number(item.totalAmountCents || 0), 0),
     };
   }
 
@@ -275,12 +298,12 @@
     if (S.page !== "openfinance") return;
     const view = $("view"); if (!view) return;
     const connections = openFinanceConnections(), accounts = openFinanceAccounts(), bills = openFinanceBills(), summary = openFinanceSummary();
-    const signature = [state.openFinanceBusy, state.openFinanceConfigured, state.message, connections.length, accounts.length, bills.length, latest(connections), latest(accounts), latest(bills)].join("|");
+    const signature = [workspaceId(), navigator.onLine, canUseCloud(), state.openFinanceBusy, state.openFinanceConfigured, state.message, connections.length, accounts.length, bills.length, latest(connections), latest(accounts), latest(bills)].join("|");
     if (!force && view.dataset.advancedV17 === `openfinance:${signature}`) return;
     view.dataset.advancedV17 = `openfinance:${signature}`;
-    const ready = state.openFinanceConfigured === true;
-    const status = ready ? "Pronto para conectar" : state.openFinanceConfigured === false ? "Aguardando credenciais" : canUseCloud() ? "Verificando servidor" : "Disponível ao entrar online";
-    view.innerHTML = `<section class="advanced-hero open-finance-hero"><div><span class="eyebrow">Consentimento bancário</span><h2>Open Finance</h2><p>Você autoriza o compartilhamento no ambiente da instituição. O Finança Simples não pede nem armazena sua senha bancária.</p></div><div class="button-row"><span class="integration-status ${ready ? "ready" : ""}">${esc(status)}</span><button class="primary" data-of-action="connect" ${!ready || state.openFinanceBusy ? "disabled" : ""}>${state.openFinanceBusy === "connect" ? "Abrindo..." : "Conectar instituição"}</button></div></section>${messageBox()}${state.openFinanceConfigured === false ? `<div class="notice warn advanced-notice"><strong>Integração preparada, aguardando ativação</strong><span>Cadastre PLUGGY_CLIENT_ID e PLUGGY_CLIENT_SECRET como segredos da função Supabase. Nunca coloque essas credenciais no aplicativo ou no GitHub.</span></div>` : ""}<section class="kpi-grid"><article class="kpi"><span>Saldo nas contas</span><strong>${esc(money(summary.bankBalance))}</strong><small>última sincronização</small></article><article class="kpi"><span>Uso nos cartões</span><strong>${esc(money(summary.creditUsed))}</strong><small>informado pelas instituições</small></article><article class="kpi"><span>Faturas em aberto</span><strong>${esc(money(summary.openBills))}</strong><small>${bills.length} fatura(s) encontrada(s)</small></article><article class="kpi"><span>Instituições</span><strong>${connections.length}</strong><small>${accounts.length} conta(s) e cartão(ões)</small></article></section><div class="two-col open-finance-layout"><section class="panel"><div class="panel-head"><div><h3>Instituições conectadas</h3><small>Consentimentos e última sincronização.</small></div><button class="ghost" data-of-action="sync-all" ${!ready || !connections.length || state.openFinanceBusy ? "disabled" : ""}>${state.openFinanceBusy === "sync" ? "Sincronizando..." : "Sincronizar"}</button></div><div class="connection-list">${connections.length ? connections.map((item) => `<article class="connection-card"><div><strong>${esc(item.institutionName || "Instituição financeira")}</strong><span>${esc(timeLabel(item.lastSyncAt))}</span><small>${esc(item.executionStatus || item.status || "Conectada")}${item.consentExpiresAt ? ` · consentimento até ${esc(dateLabel(item.consentExpiresAt))}` : ""}</small></div><div class="button-row"><button class="ghost compact" data-of-action="renew" data-item-id="${esc(item.providerItemId)}" ${state.openFinanceBusy ? "disabled" : ""}>Renovar</button><button class="ghost compact danger" data-of-action="disconnect" data-item-id="${esc(item.providerItemId)}" ${state.openFinanceBusy ? "disabled" : ""}>Revogar</button></div></article>`).join("") : `<div class="empty">Nenhuma instituição conectada.</div>`}</div></section><section class="panel"><div class="panel-head"><div><h3>Contas e cartões sincronizados</h3><small>Saldos informados no último acesso autorizado.</small></div></div><div class="synced-account-grid">${accounts.length ? accounts.map((item) => `<article><span>${item.type === "CREDIT" ? "Cartão de crédito" : "Conta bancária"}</span><strong>${esc(item.name || "Conta")}</strong><small>${esc(item.numberMask || item.subtype || "")}</small><b>${esc(money(item.balanceCents))}</b>${item.type === "CREDIT" && item.availableCreditLimitCents != null ? `<em>Limite disponível: ${esc(money(item.availableCreditLimitCents))}</em>` : ""}</article>`).join("") : `<div class="empty">Os saldos aparecerão após a primeira conexão.</div>`}</div></section></div><section class="panel"><div class="panel-head"><div><h3>Faturas encontradas</h3><small>Fechamento, vencimento e valores informados pelo emissor.</small></div></div><div class="table-wrap"><table><thead><tr><th>Cartão</th><th>Fechamento</th><th>Vencimento</th><th>Status</th><th class="right">Mínimo</th><th class="right">Total</th></tr></thead><tbody>${bills.length ? bills.map((bill) => `<tr><td>${esc(bill.accountName || "Cartão")}</td><td>${esc(dateLabel(bill.closeDate))}</td><td>${esc(dateLabel(bill.dueDate))}</td><td><span class="tag">${esc(bill.status || "OPEN")}</span></td><td class="right">${bill.minimumPaymentCents == null ? "—" : esc(money(bill.minimumPaymentCents))}</td><td class="right"><strong>${esc(money(bill.totalAmountCents))}</strong></td></tr>`).join("") : `<tr><td colspan="6" class="empty">Nenhuma fatura sincronizada.</td></tr>`}</tbody></table></div></section>`;
+    const ready = state.openFinanceConfigured === true && canUseCloud();
+    const status = ready ? "Conexão em homologação" : state.openFinanceConfigured === false ? "Aguardando credenciais" : canUseCloud() ? "Verificando servidor" : "Disponível ao entrar online";
+    view.innerHTML = `<section class="advanced-hero open-finance-hero"><div><span class="eyebrow">Consentimento bancário</span><h2>Open Finance</h2><p>Você autoriza o compartilhamento no ambiente da instituição. O Finança Simples não pede nem armazena sua senha bancária.</p></div><div class="button-row"><span class="integration-status ${ready ? "ready" : ""}">${esc(status)}</span><button class="primary" data-of-action="connect" disabled title="Conexão bancária aguardando homologação de segurança">${state.openFinanceBusy === "connect" ? "Abrindo..." : "Conectar instituição"}</button></div></section>${messageBox()}<div class="notice warn advanced-notice"><strong>Nova conexão e renovação indisponíveis nesta prévia</strong><span>O consentimento bancário ainda precisa ser homologado em uma interface isolada do aplicativo. Saldos e faturas já salvos permanecem disponíveis; não há importação automática de lançamentos.</span></div>${state.openFinanceConfigured === false ? `<div class="notice warn advanced-notice"><strong>Integração preparada, aguardando ativação</strong><span>Cadastre PLUGGY_CLIENT_ID e PLUGGY_CLIENT_SECRET como segredos da função Supabase. Nunca coloque essas credenciais no aplicativo ou no GitHub.</span></div>` : ""}<section class="kpi-grid"><article class="kpi"><span>Saldo nas contas (BRL)</span><strong>${esc(money(summary.bankBalance))}</strong><small>última sincronização</small></article><article class="kpi"><span>Uso nos cartões (BRL)</span><strong>${esc(money(summary.creditUsed))}</strong><small>informado pelas instituições</small></article><article class="kpi"><span>Faturas não marcadas pagas (BRL)</span><strong>${esc(money(summary.openBills))}</strong><small>${bills.length} fatura(s) encontrada(s)</small></article><article class="kpi"><span>Instituições</span><strong>${connections.length}</strong><small>${accounts.length} conta(s) e cartão(ões)</small></article></section><div class="two-col open-finance-layout"><section class="panel"><div class="panel-head"><div><h3>Instituições conectadas</h3><small>Consentimentos e última sincronização.</small></div><button class="ghost" data-of-action="sync-all" ${!ready || !connections.length || state.openFinanceBusy ? "disabled" : ""}>${state.openFinanceBusy === "sync" ? "Sincronizando..." : "Sincronizar"}</button></div><div class="connection-list">${connections.length ? connections.map((item) => `<article class="connection-card"><div><strong>${esc(item.institutionName || "Instituição financeira")}</strong><span>${esc(timeLabel(item.lastSyncAt))}</span><small>${esc(item.executionStatus || item.status || "Conectada")}${item.consentExpiresAt ? ` · consentimento até ${esc(dateLabel(item.consentExpiresAt))}` : ""}</small></div><div class="button-row"><button class="ghost compact" data-of-action="renew" data-item-id="${esc(item.providerItemId)}" disabled title="Renovação aguardando homologação">Renovar</button><button class="ghost compact danger" data-of-action="disconnect" data-item-id="${esc(item.providerItemId)}" ${state.openFinanceBusy ? "disabled" : ""}>Revogar</button></div></article>`).join("") : `<div class="empty">Nenhuma instituição conectada.</div>`}</div></section><section class="panel"><div class="panel-head"><div><h3>Contas e cartões sincronizados</h3><small>Saldos informados no último acesso autorizado.</small></div></div><div class="synced-account-grid">${accounts.length ? accounts.map((item) => `<article><span>${item.type === "CREDIT" ? "Cartão de crédito" : "Conta bancária"}</span><strong>${esc(item.name || "Conta")}</strong><small>${esc(item.numberMask || item.subtype || "")}</small><b>${esc(money(item.balanceCents))}</b>${item.type === "CREDIT" && item.availableCreditLimitCents != null ? `<em>Limite disponível: ${esc(money(item.availableCreditLimitCents))}</em>` : ""}</article>`).join("") : `<div class="empty">Os saldos aparecerão após a primeira conexão.</div>`}</div></section></div><section class="panel"><div class="panel-head"><div><h3>Faturas encontradas</h3><small>Fechamento, vencimento e valores informados pelo emissor.</small></div></div><div class="table-wrap"><table><thead><tr><th>Cartão</th><th>Fechamento</th><th>Vencimento</th><th>Status</th><th class="right">Mínimo</th><th class="right">Total</th></tr></thead><tbody>${bills.length ? bills.map((bill) => `<tr><td>${esc(bill.accountName || "Cartão")}</td><td>${esc(dateLabel(bill.closeDate))}</td><td>${esc(dateLabel(bill.dueDate))}</td><td><span class="tag">${esc(bill.status || "OPEN")}</span></td><td class="right">${bill.minimumPaymentCents == null ? "—" : esc(money(bill.minimumPaymentCents))}</td><td class="right"><strong>${esc(money(bill.totalAmountCents))}</strong></td></tr>`).join("") : `<tr><td colspan="6" class="empty">Nenhuma fatura sincronizada.</td></tr>`}</tbody></table></div></section>`;
     $("pageTitle").textContent = "Open Finance";
     bindOpenFinanceEvents();
     ensureOpenFinanceStatus();
@@ -292,23 +315,14 @@
     state.openFinanceStatusWorkspace = id;
     try {
       const result = await cloud().edge("open-finance", { action: "status", workspaceId: id });
+      if (workspaceId() !== id) return;
       state.openFinanceConfigured = result.configured === true;
     } catch (error) {
+      if (workspaceId() !== id) return;
       state.openFinanceConfigured = null;
       if (force) setMessage(friendlyCloudError(error), true);
     }
     renderOpenFinance(true);
-  }
-
-  function loadPluggyWidget() {
-    if (window.PluggyConnect) return Promise.resolve();
-    return new Promise((resolve, reject) => {
-      const existing = $("pluggy-connect-widget");
-      if (existing) { existing.addEventListener("load", resolve, { once: true }); existing.addEventListener("error", () => reject(new Error("Não foi possível carregar a conexão segura.")), { once: true }); return; }
-      const script = document.createElement("script");
-      script.id = "pluggy-connect-widget"; script.src = "https://cdn.pluggy.ai/pluggy-connect/v2.8.2/pluggy-connect.js"; script.async = true;
-      script.onload = resolve; script.onerror = () => reject(new Error("Não foi possível carregar a conexão segura.")); document.head.appendChild(script);
-    });
   }
 
   async function persistOpenFinanceSnapshot(snapshot) {
@@ -327,60 +341,48 @@
       inputs.push({ type: "open_finance_bills", id: existing?.id || null, data: bill });
     }
     await bulkSave(inputs);
-    const accountIds = new Set((snapshot.accounts || []).map((row) => row.providerAccountId));
-    const billIds = new Set((snapshot.bills || []).map((row) => row.providerBillId));
-    for (const row of openFinanceAccounts().filter((item) => item.providerItemId === itemId && !accountIds.has(item.providerAccountId))) {
-      try { await remove("open_finance_accounts", row.id); } catch (_) { /* edição sem poder de exclusão mantém o último cache */ }
-    }
-    for (const row of openFinanceBills().filter((item) => item.providerItemId === itemId && !billIds.has(item.providerBillId))) {
-      try { await remove("open_finance_bills", row.id); } catch (_) { /* edição sem poder de exclusão mantém o último cache */ }
-    }
+    // Respostas parciais/paginadas nunca apagam o histórico local.
   }
 
-  async function syncItem(itemId) {
-    const snapshot = await cloud().edge("open-finance", { action: "syncItem", workspaceId: workspaceId(), itemId });
+  async function syncItem(itemId, operation) {
+    const snapshot = await cloud().edge("open-finance", { action: "syncItem", workspaceId: operation.id, itemId });
+    operation.assertCurrent();
     await persistOpenFinanceSnapshot(snapshot);
     return snapshot;
   }
 
-  async function connectInstitution(itemId = "") {
-    if (!canUseCloud()) { setMessage("Entre com a conta online para conectar uma instituição.", true); return renderOpenFinance(true); }
-    state.openFinanceBusy = itemId ? `renew:${itemId}` : "connect"; setMessage(""); renderOpenFinance(true);
-    try {
-      await loadPluggyWidget();
-      const token = await cloud().edge("open-finance", { action: "createConnectToken", workspaceId: workspaceId(), ...(itemId ? { itemId } : {}) });
-      if (!window.PluggyConnect || !token.accessToken) throw new Error("Token temporário de conexão inválido.");
-      const widget = new window.PluggyConnect({ connectToken: token.accessToken, includeSandbox: false, products: ["ACCOUNTS", "CREDIT_CARDS", "TRANSACTIONS"], countries: ["BR"], language: "pt", theme: "dark",
-        onSuccess: (payload) => { const connectedId = payload?.item?.id || payload?.id; if (!connectedId) { setMessage("A instituição não retornou o identificador da conexão.", true); state.openFinanceBusy = ""; return renderOpenFinance(true); } void (async () => { try { const snapshot = await cloud().edge("open-finance", { action: itemId ? "syncItem" : "registerItem", workspaceId: workspaceId(), itemId: connectedId }); await persistOpenFinanceSnapshot(snapshot); await load(); setMessage(`${(snapshot.accounts || []).length} conta(s) e ${(snapshot.bills || []).length} fatura(s) sincronizadas.`); } catch (error) { setMessage(friendlyCloudError(error), true); } finally { state.openFinanceBusy = ""; renderOpenFinance(true); } })(); },
-        onError: (error) => { setMessage(error?.message || "A conexão com a instituição não foi concluída.", true); state.openFinanceBusy = ""; renderOpenFinance(true); },
-        onClose: () => { if (state.openFinanceBusy) { state.openFinanceBusy = ""; renderOpenFinance(true); } },
-      });
-      widget.init();
-    } catch (error) { state.openFinanceBusy = ""; setMessage(friendlyCloudError(error), true); renderOpenFinance(true); }
+  async function connectInstitution() {
+    setMessage("Nova conexão e renovação aguardam homologação de segurança. Nenhum acesso bancário foi iniciado.", true);
+    renderOpenFinance(true);
   }
 
   async function syncAllOpenFinance() {
+    if (!canUseCloud() || state.openFinanceBusy || !can("openFinance", "edit")) return;
+    const operation = workspaceOperation();
     state.openFinanceBusy = "sync"; setMessage("Sincronizando instituições..."); renderOpenFinance(true);
     try {
       let accountCount = 0, billCount = 0;
-      for (const item of openFinanceConnections()) { const snapshot = await syncItem(item.providerItemId); accountCount += (snapshot.accounts || []).length; billCount += (snapshot.bills || []).length; }
+      for (const item of openFinanceConnections()) { const snapshot = await syncItem(item.providerItemId, operation); accountCount += (snapshot.accounts || []).length; billCount += (snapshot.bills || []).length; }
       await load(); setMessage(`${accountCount} conta(s) e ${billCount} fatura(s) atualizadas.`);
     } catch (error) { setMessage(friendlyCloudError(error), true); }
-    state.openFinanceBusy = ""; renderOpenFinance(true);
+    state.openFinanceBusy = ""; operation.release(); renderOpenFinance(true);
   }
 
   async function disconnectInstitution(itemId) {
+    if (!canUseCloud() || state.openFinanceBusy || !can("openFinance", "delete")) return;
     const connection = openFinanceConnections().find((item) => item.providerItemId === itemId);
     if (!confirm(`Revogar o acesso à instituição “${connection?.institutionName || "selecionada"}”?`)) return;
+    const operation = workspaceOperation();
     state.openFinanceBusy = `delete:${itemId}`; setMessage(""); renderOpenFinance(true);
     try {
-      await cloud().edge("open-finance", { action: "disconnect", workspaceId: workspaceId(), itemId });
+      await cloud().edge("open-finance", { action: "disconnect", workspaceId: operation.id, itemId });
+      operation.assertCurrent();
       for (const row of openFinanceBills().filter((item) => item.providerItemId === itemId)) await remove("open_finance_bills", row.id);
       for (const row of openFinanceAccounts().filter((item) => item.providerItemId === itemId)) await remove("open_finance_accounts", row.id);
       if (connection) await remove("open_finance_connections", connection.id);
       await load(); setMessage("Consentimento revogado e conexão removida.");
     } catch (error) { setMessage(friendlyCloudError(error), true); }
-    state.openFinanceBusy = ""; renderOpenFinance(true);
+    state.openFinanceBusy = ""; operation.release(); renderOpenFinance(true);
   }
 
   function bindOpenFinanceEvents() {
@@ -394,6 +396,14 @@
   }
 
   function enhance() {
+    const id = workspaceId();
+    if (state.workspaceKey !== id) {
+      state.workspaceKey = id;
+      state.investmentEdit = ""; state.goalEdit = "";
+      state.message = ""; state.messagePage = "";
+      state.openFinanceConfigured = null; state.openFinanceStatusWorkspace = "";
+      state.marketAttemptedWorkspace = "";
+    }
     if (S.page === "investments") renderInvestments();
     if (S.page === "openfinance") renderOpenFinance();
   }

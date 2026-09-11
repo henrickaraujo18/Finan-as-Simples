@@ -24,17 +24,11 @@ Nunca incluir no aplicativo ou no repositório:
 
 ## Open Finance
 
-As funções `open-finance` e a interface Windows implementam:
+Nova conexão e renovação estão bloqueadas nesta prévia, inclusive a emissão de tokens pela função. O widget não é carregado no contexto privilegiado do Tauri.
 
-1. validação do JWT do usuário;
-2. validação da membership e da permissão `openFinance` no workspace ativo;
-3. emissão de token temporário Pluggy vinculado ao workspace;
-4. consentimento no widget do provedor;
-5. sincronização de instituições, contas, cartões e faturas;
-6. cache criptografado local e sincronização por workspace;
-7. renovação e revogação do consentimento.
+O código existente verifica JWT, membership e permissão `openFinance` e contém consulta/revogação de itens vinculados ao workspace, além de cache de instituições, contas e faturas. Esses fluxos precisam de homologação com o provedor. Não há importação/conciliação automática de transações bancárias.
 
-Para produção, configure `PLUGGY_CLIENT_ID` e `PLUGGY_CLIENT_SECRET` diretamente nos segredos das Edge Functions do Supabase. O token da API Pluggy nunca é enviado ao aplicativo.
+Antes de produção: implementar consentimento isolado, validar campos e paginação da API e configurar `PLUGGY_CLIENT_ID` e `PLUGGY_CLIENT_SECRET` diretamente nos segredos das Edge Functions do Supabase. O token da API Pluggy nunca deve ser enviado ao aplicativo.
 
 ## Indicadores do Banco Central
 

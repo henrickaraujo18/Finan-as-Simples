@@ -2,6 +2,8 @@
 
 Referência auditada: Google Planilhas **Finança Simples - Essencial 2025**, com abas `MENU`, `JAN` a `DEZ` e `ANUAL`.
 
+**Estado: prévia em homologação.** “Sim” abaixo significa implementação encontrada no código; não equivale a aceite funcional completo no Windows. Os critérios de liberação estão em [VALIDATION-1.7.md](VALIDATION-1.7.md).
+
 | Área | Planilha | Aplicativo Windows 1.7 | Observação |
 |---|---|---|---|
 | Saldo inicial e renda média | Sim | Sim | Configurados em Parametrização. |
@@ -19,7 +21,7 @@ Referência auditada: Google Planilhas **Finança Simples - Essencial 2025**, co
 | Gráficos e composição | Sim | Sim | Volumetria, categorias, cartões e próximo mês. |
 | Segurança multiusuário | Não | Sim | Auth, workspaces, papéis, permissões e RLS. |
 | Funcionamento offline | Limitado ao navegador | Sim | SQLite/SQLCipher local, sincronização posterior. |
-| Open Finance | Não | Sim | Integração Pluggy no servidor; exige credenciais de produção. |
+| Open Finance | Não | Parcial, desativado para novas conexões | Cache e backend preparados; faltam consentimento isolado, credenciais e homologação. Sem importação automática de transações. |
 | Investimentos e metas | Não | Sim | Carteira manual, resultado, liquidez, vencimentos e metas. |
 | Indicadores oficiais | Não | Sim | Dólar, Selic e IPCA via Banco Central, atualizados no servidor. |
 | Agente financeiro | Não | Sim | Aurora usa regras transparentes e os dados do próprio ambiente. |
@@ -33,10 +35,14 @@ Referência auditada: Google Planilhas **Finança Simples - Essencial 2025**, co
 - Compras feitas após o fechamento passam para a fatura seguinte.
 - Pagamento de fatura movimenta o caixa uma vez; a compra permanece apenas na análise do cartão.
 - Faturas pendentes entram uma vez na projeção de saldo.
+- Saldos mensais ignoram lançamentos futuros e carregam o saldo do mês anterior.
+- Pagamentos atrasados entram no mês da baixa, preservando o vencimento.
+- Simulações rejeitam números inválidos, prazos fracionários e resultados fora do limite seguro.
 
 ## Limites intencionais
 
 - O sistema não executa investimentos nem movimentações bancárias.
 - Aurora é um assistente educacional baseado em regras, não uma recomendação profissional.
 - Cotações individuais de ativos continuam manuais; os dados automáticos atuais são indicadores macroeconômicos oficiais.
-- Open Finance real depende de credenciais Pluggy cadastradas como segredos do backend.
+- Open Finance real depende de implementação isolada do consentimento, credenciais Pluggy e testes ponta a ponta.
+- Login, sincronização, recuperação, restauração de backup e permissões entre dispositivos ainda exigem homologação real.

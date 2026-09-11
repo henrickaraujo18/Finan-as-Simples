@@ -32,13 +32,13 @@
       "capabilities": [],
       "csp": {
         "default-src": "'self'",
-        "connect-src": "'self' ipc: http://ipc.localhost https://*.supabase.co https://pluggy.ai https://*.pluggy.ai",
+        "connect-src": "'self' ipc: http://ipc.localhost https://*.supabase.co",
         "img-src": "'self' data: blob:",
         "style-src": "'self' 'unsafe-inline'",
-        "script-src": "'self' https://cdn.pluggy.ai",
+        "script-src": "'self'",
         "font-src": "'self' data:",
         "object-src": "'none'",
-        "frame-src": "https://pluggy.ai https://*.pluggy.ai",
+        "frame-src": "'none'",
         "base-uri": "'none'",
         "form-action": "'self'"
       },

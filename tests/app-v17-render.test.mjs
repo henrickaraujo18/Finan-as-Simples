@@ -3,7 +3,8 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
 
-function render(page) {
+function render(page, options = {}) {
+  let enhance;
   const elements = {
     view: { dataset: {}, innerHTML: "", querySelectorAll: () => [] },
     pageTitle: { textContent: "" },
@@ -38,7 +39,7 @@ function render(page) {
       addEventListener: () => {}, createElement: () => ({ addEventListener: () => {} }),
     },
     navigator: { onLine: false },
-    MutationObserver: class { observe() {} },
+    MutationObserver: class { constructor(callback) { enhance = callback; } observe() {} },
     FormData: class { entries() { return []; } },
     Intl, Date, Math, Number, String, Set, Map, Promise,
     confirm: () => false,
@@ -47,9 +48,10 @@ function render(page) {
     console,
   };
   vm.createContext(context);
+  Object.assign(data, options.data || {});
   const source = readFileSync(new URL("../desktop-dist/app-v17.js", import.meta.url), "utf8");
   vm.runInContext(source, context, { filename: "app-v17.js" });
-  return elements;
+  return { ...elements, core, enhance };
 }
 
 test("tela avançada de investimentos renderiza carteira e metas", () => {
@@ -66,4 +68,39 @@ test("tela Open Finance renderiza estado offline com dados locais", () => {
   assert.match(elements.view.innerHTML, /Disponível ao entrar online/);
   assert.match(elements.view.innerHTML, /Contas e cartões sincronizados/);
   assert.equal(elements.pageTitle.textContent, "Open Finance");
+});
+
+test("renderização troca de ambiente mesmo com quantidades e datas iguais", () => {
+  const h = render("investments");
+  const before = h.view.dataset.advancedV17;
+  h.workspaceSelector.value = "outro-ambiente";
+  h.enhance();
+  assert.notEqual(h.view.dataset.advancedV17, before);
+  assert.match(h.view.innerHTML, /Nova meta financeira/);
+});
+
+test("navegação base invalida renderizações avançadas antes de voltar à tela", () => {
+  const source = readFileSync(new URL("../desktop-dist/app-v14.js", import.meta.url), "utf8");
+  assert.match(source, /delete \$\("view"\)\.dataset\.advancedV17/);
+  assert.match(source, /delete \$\("view"\)\.dataset\.proDashboard/);
+  const h = render("investments");
+  h.view.innerHTML = "tela base";
+  delete h.view.dataset.advancedV17;
+  h.enhance();
+  assert.match(h.view.innerHTML, /Nova meta financeira/);
+});
+
+test("liquidez não informada não é apresentada como liquidez diária", () => {
+  const h = render("investments", { data: { investments: [{ id: "old", name: "Ativo antigo", quantity: 1, currentPriceCents: 10000, averagePriceCents: 10000 }] } });
+  assert.match(h.view.innerHTML, /Não informada/);
+  assert.doesNotMatch(h.view.innerHTML, /<td>Diária<\/td>/);
+});
+
+test("conexão remota não injeta scripts no contexto privilegiado do aplicativo", () => {
+  const source = readFileSync(new URL("../desktop-dist/app-v17.js", import.meta.url), "utf8");
+  const config = JSON.parse(readFileSync(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
+  assert.doesNotMatch(source, /cdn\.pluggy\.ai|new window\.PluggyConnect/);
+  assert.equal(config.app.security.csp["script-src"], "'self'");
+  assert.equal(config.app.security.csp["frame-src"], "'none'");
+  assert.match(render("openfinance").view.innerHTML, /Nova conexão e renovação indisponíveis/);
 });

@@ -25,9 +25,9 @@ As entidades avançadas seguem os mesmos módulos:
 
 ## Open Finance
 
-A Edge Function valida o usuário e a membership antes de emitir um token temporário. O identificador do item Pluggy é vinculado ao workspace e conferido novamente ao sincronizar, renovar ou revogar o consentimento.
+A Edge Function valida o usuário e a membership. Nesta revisão, a emissão de tokens está bloqueada até homologação de um consentimento isolado do Tauri. O identificador do item Pluggy é conferido contra o workspace antes de consultar dados ou revogar o acesso.
 
-O aplicativo nunca recebe o Client Secret nem a API key do provedor. A senha bancária é informada apenas no ambiente da instituição/provedor durante o consentimento.
+O aplicativo nunca recebe o Client Secret nem a API key do provedor. A nova conexão bancária não pode ser iniciada nesta prévia.
 
 ## Atualização automática
 

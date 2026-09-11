@@ -1,5 +1,6 @@
 (() => {
-  const invoke = window.__TAURI__?.core?.invoke;
+  // Resolve on each call so the authenticated cloud/sync wrapper is respected.
+  const invoke = (command, args) => window.__TAURI__.core.invoke(command, args);
 
   const TYPES = [
     "transactions", "accounts", "cards", "categories", "investments", "investment_goals",
@@ -127,12 +128,12 @@
     const missingCategories = ESSENTIAL_CATEGORIES
       .filter(([kind, name]) => !existingKeys.has(`${kind}|${name}`))
       .map(([kind, name]) => ({ type: "categories", data: { kind, name, active: true, source: "essential-2025" } }));
-    if (missingCategories.length) {
+    if (missingCategories.length && (!window.FSAuth || window.FSAuth.can("settings", "create"))) {
       await bulkSave(missingCategories);
       S.data.categories = await list("categories");
     }
 
-    if (!accounts().length) {
+    if (!accounts().length && (!window.FSAuth || window.FSAuth.can("accounts", "create"))) {
       await bulkSave([
         { type: "accounts", data: { name: "Banco 1", institution: "", type: "checking", openingBalanceCents: 0, active: true, source: "essential-2025" } },
         { type: "accounts", data: { name: "Banco 2", institution: "", type: "checking", openingBalanceCents: 0, active: true, source: "essential-2025" } },
@@ -143,7 +144,7 @@
   }
 
   async function load() {
-    if (!invoke) throw new Error("API local do Tauri não disponível.");
+    if (!window.__TAURI__?.core?.invoke) throw new Error("API local do Tauri não disponível.");
     for (const type of TYPES) S.data[type] = await list(type);
     S.settings = { ...DEFAULT_SETTINGS, ...(S.data.settings[0] || {}) };
     await ensureEssentialSeeds();
@@ -172,7 +173,8 @@
     return addMonths(`${monthString}-01`, 1).slice(0, 7);
   }
   function splitAmount(totalCents, count) {
-    count = Math.max(1, Number(count || 1));
+    count = Number(count ?? 1);
+    if (!Number.isInteger(count) || count < 1 || count > 600 || !Number.isSafeInteger(totalCents) || totalCents < 0) throw new Error("Informe um valor válido e uma quantidade inteira de parcelas.");
     const base = Math.floor(Number(totalCents || 0) / count);
     let remainder = Number(totalCents || 0) - base * count;
     return Array.from({ length: count }, () => base + (remainder-- > 0 ? 1 : 0));
@@ -194,20 +196,21 @@
   function isCardPurchase(item) { return isExpense(item) && item.paymentMethod === "credit_card"; }
   function txAccountId(item) { return item.accountId || ""; }
 
-  // Para parcelas, a competência é a data programada da parcela. Compras no cartão usam o vencimento da fatura.
+  // Realizados usam a data da baixa; pendências e compras no cartão mantêm o vencimento.
   function effectiveDate(item) {
     if (isCardPurchase(item)) return item.dueDate || item.date;
+    if (item.status === "paid" && item.paidAt) return String(item.paidAt).slice(0, 10);
     if (Number(item.installmentCount || 1) > 1 && item.dueDate) return item.dueDate;
     if (item.status === "pending" && item.dueDate) return item.dueDate;
     return item.date;
   }
   function effectiveMonth(item) { return monthOf(effectiveDate(item)); }
 
-  function accountBalance(accountId) {
+  function accountBalance(accountId, throughDate = "9999-12-31") {
     const account = accountById(accountId);
     let balance = Number(account?.openingBalanceCents ?? 0);
     for (const item of tx()) {
-      if (item.status !== "paid") continue;
+      if (item.status !== "paid" || effectiveDate(item) > throughDate) continue;
       const amount = Number(item.amountCents || 0);
       if (isIncome(item) && txAccountId(item) === accountId) balance += amount;
       if (isExpense(item) && !isCardPurchase(item) && txAccountId(item) === accountId) balance -= amount;
@@ -219,10 +222,10 @@
     }
     return balance;
   }
-  function totalCashBalance() {
-    const linkedBalances = accounts().reduce((sum, account) => sum + accountBalance(account.id), 0);
+  function totalCashBalance(throughDate = "9999-12-31") {
+    const linkedBalances = accounts().reduce((sum, account) => sum + accountBalance(account.id, throughDate), 0);
     const unlinkedMovement = tx().reduce((sum, item) => {
-      if (item.status !== "paid" || item.accountId) return sum;
+      if (item.status !== "paid" || item.accountId || effectiveDate(item) > throughDate) return sum;
       if (isIncome(item)) return sum + Number(item.amountCents || 0);
       if (isExpense(item) && !isCardPurchase(item)) return sum - Number(item.amountCents || 0);
       if (isCardPayment(item)) return sum - Number(item.amountCents || 0);
@@ -254,7 +257,7 @@
   }
 
   function cardPaymentsForMonth(month) {
-    return tx().filter((item) => isCardPayment(item) && monthOf(item.date) === month);
+    return tx().filter((item) => isCardPayment(item) && item.status === "paid" && effectiveMonth(item) === month);
   }
   function regularExpenseRows(month) {
     return tx().filter((item) => isExpense(item) && !isCardPurchase(item) && effectiveMonth(item) === month);
@@ -286,6 +289,9 @@
     const cardPurchases = cardPurchaseRowsByPurchaseMonth(month);
     const cardSpent = cardPurchases.reduce((s, item) => s + Number(item.amountCents || 0), 0);
     const averageIncome = Number(S.settings.averageMonthlyIncomeCents || 0);
+    const previousMonth = addMonths(`${month}-01`, -1).slice(0, 7);
+    const openingBalance = totalCashBalance(`${previousMonth}-31`);
+    const finalBalance = totalCashBalance(`${month}-31`);
     return {
       expenses,
       incomes,
@@ -299,8 +305,9 @@
       resultForecast,
       cardSpent,
       cardCommitmentPct: averageIncome ? (cardSpent / averageIncome) * 100 : 0,
-      finalBalance: totalCashBalance(),
-      forecastBalance: totalCashBalance() + incomePending - regularExpensePending - invoicePending,
+      openingBalance,
+      finalBalance,
+      forecastBalance: finalBalance + incomePending - regularExpensePending - invoicePending,
     };
   }
 
@@ -469,6 +476,8 @@
   async function settleTransaction(id) {
     const item = tx().find((x) => x.id === id);
     if (!item) return;
+    if (isCardPurchase(item)) throw new Error("Quite a compra pela fatura do cartão para registrar a saída de caixa.");
+    if (item.status === "paid") return;
     const data = { ...item, status: "paid", paidAt: today() };
     delete data.id; delete data._updatedAt;
     await save("transactions", data, id);

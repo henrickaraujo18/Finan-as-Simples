@@ -10,7 +10,7 @@ Esta etapa deve ser executada somente em um projeto Supabase dedicado ao Finanç
 4. Implantar `invite-user`, `manage-members`, `market-data` e `open-finance` com verificação JWT habilitada.
 5. Implantar `reset-password` como endpoint público para o link de recuperação.
 6. Configurar os redirects do Auth para o endpoint de recuperação.
-7. Configurar `PLUGGY_CLIENT_ID` e `PLUGGY_CLIENT_SECRET` somente como segredos das Edge Functions, quando o Open Finance de produção for ativado.
+7. Homologar primeiro o consentimento isolado e a API bancária; a versão atual bloqueia novos tokens/conexões. Configurar `PLUGGY_CLIENT_ID` e `PLUGGY_CLIENT_SECRET` somente como segredos das Edge Functions. Configurar credenciais, por si só, não remove o bloqueio de segurança.
 8. Preencher no desktop somente `supabaseUrl`, chave publicável e URL de recuperação.
 9. Executar Security Advisor e testes de isolamento entre dois usuários/workspaces antes de habilitar sincronização real em produção.
 

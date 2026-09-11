@@ -9,6 +9,7 @@ on:
       - "src-tauri/**"
       - "desktop-dist/**"
       - "supabase/**"
+      - "tests/**"
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/build-windows.yml"
@@ -19,6 +20,7 @@ on:
       - "src-tauri/**"
       - "desktop-dist/**"
       - "supabase/**"
+      - "tests/**"
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/build-windows.yml"
@@ -74,6 +76,7 @@ jobs:
             "desktop-dist/cloud-config.js",
             "desktop-dist/cloud-runtime-v16.js",
             "desktop-dist/app-v17.js",
+            "desktop-dist/finance-v17.js",
             "desktop-dist/advanced-v17.css",
             "desktop-dist/styles.css",
             "desktop-dist/security-v16.css",
@@ -104,6 +107,7 @@ jobs:
           node --check desktop-dist/cloud-config.js
           node --check desktop-dist/cloud-runtime-v16.js
           node --check desktop-dist/app-v17.js
+          node --check desktop-dist/finance-v17.js
 
           $index = Get-Content "desktop-dist/index.html" -Raw
           $core = Get-Content "desktop-dist/core-v14.js" -Raw
@@ -159,7 +163,7 @@ jobs:
           if ($advanced -notmatch "open-finance" -or $advanced -notmatch "market-data" -or $advanced -notmatch "Aurora" -or $advanced -notmatch "investment_goals") { throw "Módulos avançados da versão 1.7 estão incompletos." }
           if ($rustSecurity -notmatch "Scope::User") { throw "Chave SQLCipher não está protegida no escopo do usuário Windows." }
 
-          Write-Host "Frontend/backend 1.7 validados: finanças, Open Finance, indicadores BCB, Aurora, Supabase Auth, sync, SQLCipher/DPAPI, RLS e updater seguro."
+          Write-Host "Verificações estáticas concluídas. Os fluxos reais de autenticação, sincronização e Open Finance exigem homologação separada."
 
       - name: Testar cálculos financeiros do frontend
         run: npm run test:financial
@@ -237,7 +241,7 @@ jobs:
           Copy-Item $sourceInstaller.FullName $assetPath -Force
           git tag -f desktop-preview $env:GITHUB_SHA
           git push origin desktop-preview --force
-          $notes = "Finança Simples 1.7: paridade com a planilha Essencial 2025, Open Finance seguro via servidor, indicadores oficiais do Banco Central, carteira, metas, agente Aurora, simuladores, workspaces isolados, sincronização offline-first, SQLCipher/DPAPI e atualização assinada quando habilitada."
+          $notes = "Finança Simples 1.7 — prévia em homologação: módulos financeiros da planilha Essencial 2025, saldos históricos corrigidos, carteira, metas, Aurora por regras e simuladores. Nova conexão Open Finance desativada até homologação. Indicadores BCB e sincronização dependem de sessão online; atualização automática depende de assinatura configurada. Consulte docs/VALIDATION-1.7.md para os limites e critérios de aceite."
           gh release view desktop-preview 2>$null
           if ($LASTEXITCODE -ne 0) {
             gh release create desktop-preview $assetPath --prerelease --title "Finança Simples para Windows" --notes $notes

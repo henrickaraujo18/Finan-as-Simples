@@ -4,7 +4,11 @@ O **Finança Simples** é um aplicativo Windows offline-first de organização f
 
 Ele é independente do sistema **Seja Doce** e não contém produtos, precificação, estoque, funcionários ou folha de pagamento.
 
-## Funcionalidades
+## Estado desta versão
+
+A versão **1.7 está em homologação**, em branch de revisão. Não é uma entrega completa de produção. A planilha foi usada como referência funcional e não foi alterada. Consulte [critérios de aceite e pendências](docs/VALIDATION-1.7.md).
+
+## Funcionalidades implementadas no código
 
 ### Planilha Essencial 2025
 
@@ -24,14 +28,14 @@ Ele é independente do sistema **Seja Doce** e não contém produtos, precifica�
 ### Recursos do sistema
 
 - autenticação por e-mail e senha, ambientes financeiros isolados e permissões por módulo;
-- funcionamento completo sem internet e sincronização automática quando a sessão volta a ficar online;
+- operação financeira essencial offline em dispositivo já autenticado; sincronização implementada, ainda pendente de teste ponta a ponta com usuários reais;
 - banco local criptografado no Windows, chave protegida por DPAPI, backup consistente e recuperação;
 - importação local de fatura CSV, exportação CSV/JSON e impressão em PDF;
 - carteira de investimentos, metas, perfil de risco e acompanhamento de liquidez;
 - indicadores de dólar, Selic e IPCA obtidos no servidor a partir do Banco Central e mantidos em cache local;
 - **Aurora**, agente financeiro baseado em regras, com alertas sobre liquidez, orçamento, reserva e metas;
 - simuladores de investimentos, empréstimos, financiamentos e consórcios;
-- Open Finance via Pluggy, com consentimento, saldos e faturas, sem colocar credenciais do provedor no executável;
+- estrutura de Open Finance/Pluggy para cache de saldos e faturas; nova conexão e renovação desativadas até homologação de segurança;
 - atualização automática assinada quando o canal de assinatura de produção estiver configurado.
 
 ## Arquitetura e segurança
@@ -39,13 +43,15 @@ Ele é independente do sistema **Seja Doce** e não contém produtos, precifica�
 - Os dados do usuário ficam primeiro no SQLite local e continuam disponíveis offline.
 - O Supabase Auth identifica o usuário e a Row Level Security isola cada `workspace`.
 - Dados de Open Finance também respeitam a permissão do ambiente.
-- O token temporário da conexão bancária permanece apenas em memória.
+- A interface não carrega scripts remotos com acesso ao Tauri. A emissão de novos tokens bancários está bloqueada nesta revisão.
 - `PLUGGY_CLIENT_ID`, `PLUGGY_CLIENT_SECRET`, chaves secretas do Supabase e a chave privada do updater nunca entram no frontend, no instalador ou no repositório.
 - A chave publicável do Supabase pode existir no cliente; a proteção dos dados é feita pela identidade do usuário, permissões e RLS.
 
 ## Estado das integrações externas
 
-O backend, as funções e a interface do Open Finance estão implementados. Para autorizar instituições reais, a conta Pluggy de produção precisa ter suas credenciais cadastradas diretamente como segredos do Supabase.
+Open Finance não está operacional para novas conexões. São necessários consentimento em contexto isolado, credenciais Pluggy cadastradas diretamente nos segredos do Supabase, validação de paginação/campos e testes de sincronização e revogação. O app ainda não importa transações bancárias automaticamente.
+
+Aurora usa regras locais, não IA generativa. Cotações de ativos individuais são manuais. O site anterior e o desktop ainda não usam a mesma persistência.
 
 O atualizador só publica `latest.json` quando o GitHub Actions possui o par de assinatura Tauri. Sem ele, o pipeline publica um instalador normal, mas não oferece uma atualização não assinada.
 
@@ -72,7 +78,7 @@ npm run build -- --config src-tauri/tauri.unsigned.conf.json --bundles nsis
 
 ## Validação automática
 
-O workflow Windows valida a sintaxe do frontend, o escopo do produto, as funções avançadas obrigatórias, os cálculos financeiros em Node, os testes Rust, o núcleo Tauri, a compilação NSIS e um smoke test do executável. O instalador só é publicado quando todas essas etapas passam.
+O workflow Windows valida a sintaxe do frontend, o escopo do produto, as funções avançadas obrigatórias, os cálculos financeiros em Node, os testes Rust, o núcleo Tauri, a compilação NSIS e um smoke test do executável. Em pull requests o instalador é somente um artefato de teste: não é publicado no canal principal. O smoke test apenas confirma que o processo permanece aberto; não comprova os fluxos completos.
 
 Consulte também:
 

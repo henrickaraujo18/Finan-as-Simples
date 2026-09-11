@@ -26,7 +26,9 @@ A sincronização replica apenas entidades do workspace ativo e respeita as perm
 
 As Edge Functions `open-finance` e `market-data` exigem JWT válido. Antes de acessar o provedor, a função confirma a membership e a permissão do módulo.
 
-Credenciais Pluggy ficam em segredos do servidor. O token temporário de consentimento é entregue somente à sessão autenticada e não é persistido. Contas e faturas sincronizadas são isoladas por workspace.
+Credenciais Pluggy ficam em segredos do servidor. A emissão de tokens de nova conexão/renovação está bloqueada nesta revisão até homologação em contexto isolado. Nenhum script remoto é carregado no contexto privilegiado do aplicativo. Contas e faturas salvas pertencem ao workspace.
+
+Os testes automatizados usam mocks para validar a lógica das funções. Não substituem testes de JWT, RLS e consentimento com usuários e instituições reais.
 
 ## Atualizações
 

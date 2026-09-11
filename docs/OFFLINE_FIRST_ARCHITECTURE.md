@@ -30,7 +30,7 @@ O SQLite é a base primária do dispositivo. O Supabase replica entidades autori
 | Contas, cartões, categorias e transferências | Completo | Completo + sincronização |
 | Dashboards mensal, anual e analítico | Completo | Completo |
 | Carteira, metas, Aurora e simuladores | Completo com dados salvos | Completo + indicadores atualizados |
-| Open Finance | Últimos dados sincronizados | Consentimento e sincronização ativa |
+| Open Finance | Últimos dados salvos | Novas conexões e renovação bloqueadas; backend aguardando homologação |
 | Indicadores BCB | Último valor salvo, com data | Atualização pelo servidor |
 | Backup e exportações | Completo | Completo |
 | Atualizações do app | Versão instalada permanece funcional | Busca e instala pacote assinado |
@@ -66,9 +66,9 @@ Contas e faturas Open Finance, além dos indicadores BCB, são salvos como entid
 
 - Credenciais Pluggy ficam somente nas Edge Functions.
 - A chave secreta/service role do Supabase não entra no cliente.
-- O token temporário do widget Open Finance permanece em memória.
+- A emissão de novos tokens de consentimento está bloqueada até homologação.
 - Cada chamada avançada valida JWT, membership e permissão do módulo.
-- O CSP permite somente os endpoints necessários do Supabase e do widget Pluggy.
+- O CSP restringe scripts ao pacote local e não permite frames remotos nem scripts Pluggy no contexto Tauri.
 - Atualizações automáticas exigem assinatura Tauri válida.
 
 ## Regra de desenvolvimento

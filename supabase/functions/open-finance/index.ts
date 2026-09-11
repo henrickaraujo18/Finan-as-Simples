@@ -136,16 +136,11 @@ Deno.serve(async (request: Request) => {
     if (!await authorize(request, workspaceId, permission)) return respond({ error: 'forbidden' }, 403)
     const env = environment()
     const configured = Boolean(env.clientId && env.clientSecret)
-    if (action === 'status') return respond({ provider: 'Pluggy', configured })
+    if (action === 'status') return respond({ provider: 'Pluggy', configured, connectionEnabled: false, reason: 'security_validation_pending' })
     if (!configured) return respond({ error: 'provider_not_configured' }, 503)
     if (action === 'createConnectToken') {
-      const itemId = String(body.itemId ?? '').trim()
-      if (itemId) await ownedItem(workspaceId, itemId)
-      const token = await pluggy<{ accessToken?: string }>('/connect_token', {
-        method: 'POST', body: JSON.stringify({ ...(itemId ? { itemId } : {}), options: { clientUserId: workspaceId, avoidDuplicates: true } }),
-      })
-      if (!token.accessToken) throw new Error('connect_token_missing')
-      return respond({ accessToken: token.accessToken })
+      // Não entregar tokens até homologar o consentimento em contexto isolado do Tauri.
+      return respond({ error: 'security_validation_pending' }, 409)
     }
     if (action === 'registerItem' || action === 'syncItem') {
       const itemId = String(body.itemId ?? '').trim()
