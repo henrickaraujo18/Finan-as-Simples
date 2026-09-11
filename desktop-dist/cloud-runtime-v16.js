@@ -347,7 +347,11 @@
   ]);
 
   tauriCore.invoke = async function securedCloudInvoke(command, args = {}) {
-    if (!cloudCommands.has(command)) return nativeInvoke(command, args);
+    if (!cloudCommands.has(command)) {
+      const result = await nativeInvoke(command, args);
+      if (["upsert_entity", "upsert_entities", "delete_entity"].includes(command)) scheduleSync(80);
+      return result;
+    }
     if (command === "auth_setup_owner") return cloudOwnerSetup(args);
     if (command === "auth_login") return cloudLogin(args);
     if (command === "auth_request_password_reset") return requestReset(args.email);
