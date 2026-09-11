@@ -147,13 +147,30 @@
     return status;
   }
 
-  async function bootstrapExistingCloudAccount(password) {
-    const reconciled = await reconcile(password);
-    if ((reconciled?.workspaces || []).length) {
-      await syncNow().catch(() => {});
-      return reconciled;
+  async function ensureAllCloudWorkspaces(status) {
+    const accessToken = await token();
+    for (const workspace of status?.workspaces || []) {
+      await nativeInvoke("cloud_ensure_workspace", { accessToken, workspaceId: workspace.id, name: workspace.name || "Meu Financeiro" });
     }
-    return null;
+    return status;
+  }
+
+  async function fetchCloudWorkspaces() {
+    const accessToken = await token();
+    const response = await fetch(`${cfg.supabaseUrl}/rest/v1/rpc/fs_my_workspaces`, {
+      method: "POST",
+      headers: { ...apiHeaders(), Authorization: `Bearer ${accessToken}` },
+      body: "{}",
+    });
+    return parseResponse(response, "Não foi possível consultar seus ambientes financeiros.");
+  }
+
+  async function bootstrapExistingCloudAccount(password) {
+    const workspaces = await fetchCloudWorkspaces();
+    if (!Array.isArray(workspaces) || workspaces.length === 0) return null;
+    const reconciled = await reconcile(password);
+    await syncNow().catch(() => {});
+    return reconciled;
   }
 
   async function cloudOwnerSetup(args) {
@@ -167,7 +184,7 @@
       if (existing) return existing;
 
       const local = await nativeInvoke("auth_setup_owner", { email, password, workspaceName });
-      await ensureCloudWorkspace(local);
+      await ensureAllCloudWorkspaces(local);
       const reconciled = await reconcile(password);
       await syncNow().catch(() => {});
       return reconciled;
@@ -179,7 +196,7 @@
           throw new Error("Conta criada. Confirme seu e-mail e depois volte ao Finança Simples com o mesmo e-mail e senha.");
         }
         const local = await nativeInvoke("auth_setup_owner", { email, password, workspaceName });
-        await ensureCloudWorkspace(local);
+        await ensureAllCloudWorkspaces(local);
         const reconciled = await reconcile(password);
         await syncNow().catch(() => {});
         return reconciled;
@@ -195,16 +212,36 @@
     if (!cloudOnline()) return nativeInvoke("auth_login", args);
     try {
       await signIn(args?.email, args?.password);
+      try {
+        const localStatus = await nativeInvoke("auth_login", args);
+        if ((localStatus?.workspaces || []).length) await ensureAllCloudWorkspaces(localStatus);
+      } catch (_) {}
       const reconciled = await reconcile(args?.password);
-      if (!(reconciled?.workspaces || []).length) {
-        throw new Error("Sua conta está válida, mas ainda não possui um ambiente financeiro. Peça acesso ao administrador ou crie o ambiente pelo primeiro acesso.");
-      }
       await syncNow().catch(() => {});
       return reconciled;
     } catch (error) {
       if (networkFailure(error)) return nativeInvoke("auth_login", args);
+      if (error instanceof CloudError && [400, 401].includes(error.status)) {
+        clearCloudSession();
+        let localStatus;
+        try { localStatus = await nativeInvoke("auth_login", args); }
+        catch (_) { throw new Error("E-mail ou senha inválidos."); }
+        // Conta criada originalmente offline: só cria identidade cloud após validar a mesma senha local.
+        const created = await signUp(args?.email, args?.password);
+        if (created?.user?.identities && created.user.identities.length === 0) {
+          clearCloudSession();
+          throw new Error("Esta conta já existe na nuvem com outra senha. Use ‘Esqueci minha senha’ para reconciliar o acesso.");
+        }
+        if (!created?.access_token) {
+          clearCloudSession();
+          throw new Error("Conta online criada. Confirme o e-mail recebido e depois entre novamente; seus dados locais permanecerão preservados.");
+        }
+        await ensureAllCloudWorkspaces(localStatus);
+        const reconciled = await reconcile(args?.password);
+        await syncNow().catch(() => {});
+        return reconciled;
+      }
       clearCloudSession();
-      if (error instanceof CloudError && [400, 401].includes(error.status)) throw new Error("E-mail ou senha inválidos.");
       throw error;
     }
   }

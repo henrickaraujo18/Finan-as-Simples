@@ -143,6 +143,13 @@ struct UpdateResult {
     message: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PortableBackupInfo {
+    path: String,
+    recovery_key: String,
+}
+
 fn updater_public_key() -> Option<String> {
     option_env!("FINANCA_UPDATER_PUBLIC_KEY")
         .map(str::trim)
@@ -1289,6 +1296,49 @@ fn create_backup(db:State<'_,LocalDb>,auth:State<'_,AuthState>)->Result<String,S
 }
 
 #[tauri::command]
+fn get_recovery_key(db:State<'_,LocalDb>,auth:State<'_,AuthState>)->Result<String,String>{
+    let (user_id,workspace_id,_,is_super_admin)=require_context(&db,&auth)?;
+    let role={let connection=db.connection.lock().map_err(|_|"banco local indisponível".to_string())?;workspace_role(&connection,&user_id,&workspace_id)?};
+    if !is_super_admin && role!="owner" { return Err("somente o proprietário do ambiente pode acessar a chave de recuperação".to_string()); }
+    #[cfg(target_os="windows")]
+    { return security_v16::recovery_key_hex(&db.path); }
+    #[cfg(not(target_os="windows"))]
+    { Err("backup portátil está disponível no aplicativo Windows".to_string()) }
+}
+
+#[tauri::command]
+fn create_portable_backup(db:State<'_,LocalDb>,auth:State<'_,AuthState>)->Result<PortableBackupInfo,String>{
+    let (user_id,workspace_id,_,is_super_admin)=require_context(&db,&auth)?;
+    let connection=db.connection.lock().map_err(|_|"banco local indisponível".to_string())?;
+    let role=workspace_role(&connection,&user_id,&workspace_id)?;
+    if !is_super_admin && role!="owner" { return Err("somente o proprietário do ambiente pode criar backup portátil".to_string()); }
+    #[cfg(target_os="windows")]
+    {
+        let (path,recovery_key)=security_v16::create_portable_backup(&connection,&db.path)?;
+        audit(&connection,Some(&user_id),Some(&workspace_id),"portable_backup_create",json!({"path":path}));
+        return Ok(PortableBackupInfo{path,recovery_key});
+    }
+    #[cfg(not(target_os="windows"))]
+    { Err("backup portátil está disponível no aplicativo Windows".to_string()) }
+}
+
+#[tauri::command]
+fn restore_portable_backup(app:tauri::AppHandle,db:State<'_,LocalDb>,auth:State<'_,AuthState>,backup_path:String,recovery_key:String)->Result<(),String>{
+    #[cfg(target_os="windows")]
+    {
+        let backup=PathBuf::from(backup_path.trim());
+        let mut connection=db.connection.lock().map_err(|_|"banco local indisponível".to_string())?;
+        security_v16::restore_portable_backup(&mut connection,&db.path,&backup,&recovery_key)?;
+        configure_database(&connection)?;
+        drop(connection);
+        *auth.session.lock().map_err(|_|"sessão indisponível".to_string())?=AuthSession::default();
+        app.restart();
+    }
+    #[cfg(not(target_os="windows"))]
+    { Err("restauração portátil está disponível no aplicativo Windows".to_string()) }
+}
+
+#[tauri::command]
 async fn check_and_install_update(app:tauri::AppHandle,db:State<'_,LocalDb>)->Result<UpdateResult,String>{
     let Some(pubkey)=updater_public_key() else {
         return Ok(UpdateResult{configured:false,available:false,version:None,message:"atualização automática aguardando assinatura de produção".to_string()});
@@ -1334,7 +1384,8 @@ pub fn run(){
             runtime_status,auth_status,auth_setup_owner,auth_login,auth_logout,auth_switch_workspace,
             auth_create_workspace,auth_list_members,auth_create_or_grant_user,auth_update_member_permissions,
             auth_remove_member,auth_change_password,auth_request_password_reset,list_entities,upsert_entity,
-            upsert_entities,delete_entity,pending_sync_count,export_snapshot,create_backup,check_and_install_update,
+            upsert_entities,delete_entity,pending_sync_count,export_snapshot,create_backup,get_recovery_key,
+            create_portable_backup,restore_portable_backup,check_and_install_update,
             cloud_runtime_v16::cloud_reconcile_login,cloud_runtime_v16::cloud_ensure_workspace,cloud_runtime_v16::cloud_sync
         ])
         .run(tauri::generate_context!())

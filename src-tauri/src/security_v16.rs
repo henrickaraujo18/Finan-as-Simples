@@ -354,4 +354,23 @@ mod tests {
         assert!(parse_hex_32("1234").is_err());
         assert!(parse_hex_32(&"zz".repeat(32)).is_err());
     }
+
+    #[test]
+    fn backup_portatil_restaura_snapshot_validado() {
+        let dir=std::env::temp_dir().join(format!("financa-simples-security-{}",chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()));
+        fs::create_dir_all(&dir).unwrap();
+        let db_path=dir.join("financa-simples.sqlite3");
+        let local_key=generate_key().to_vec();
+        save_key(&db_path,&local_key).unwrap();
+        let mut connection=Connection::open(&db_path).unwrap();
+        apply_key(&connection,&local_key).unwrap();
+        connection.execute_batch("CREATE TABLE app_metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL); INSERT INTO app_metadata(key,value) VALUES('product_scope','financa-simples'); CREATE TABLE probe(value TEXT NOT NULL); INSERT INTO probe(value) VALUES('antes');").unwrap();
+        let (backup,key)=create_portable_backup(&connection,&db_path).unwrap();
+        connection.execute("UPDATE probe SET value='depois'",[]).unwrap();
+        restore_portable_backup(&mut connection,&db_path,Path::new(&backup),&key).unwrap();
+        let value:String=connection.query_row("SELECT value FROM probe",[],|row|row.get(0)).unwrap();
+        assert_eq!(value,"antes");
+        drop(connection);
+        let _=fs::remove_dir_all(dir);
+    }
 }

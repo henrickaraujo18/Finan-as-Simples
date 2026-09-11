@@ -188,6 +188,9 @@ pub(crate) async fn cloud_reconcile_login(
     let http = client()?;
     let user = validate_user(&http, &access_token).await?;
     let workspaces = fetch_workspaces(&http, &access_token).await?;
+    if workspaces.is_empty() {
+        return Err("conta autenticada sem ambiente financeiro autorizado".to_string());
+    }
     let is_platform_admin = fetch_platform_admin(&http, &access_token, &user.id)
         .await
         .unwrap_or(false);
