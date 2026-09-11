@@ -11,7 +11,9 @@ function edge(name, options = {}) {
   const membership = options.membership === undefined ? { role: "owner", active: true } : options.membership;
   const query = { select() { return this; }, eq() { return this; }, async maybeSingle() { return { data: membership }; } };
   const env = { SUPABASE_URL: "https://example.supabase.co", SUPABASE_ANON_KEY: "public-test-key", ...(options.configured ? { PLUGGY_CLIENT_ID: "test-id", PLUGGY_CLIENT_SECRET: "test-secret-not-real" } : {}) };
-  const source = readFileSync(new URL(`../supabase/functions/${name}/index.ts`, import.meta.url), "utf8").replace(/^import .*\n/gm, "");
+  const raw = readFileSync(new URL(`../supabase/functions/${name}/index.ts`, import.meta.url), "utf8");
+  // Git no Windows pode converter o checkout para CRLF. O mock não depende do EOL.
+  const source = (options.crlf ? raw.replace(/\r?\n/g, "\r\n") : raw).split(/\r?\n/).filter((line) => !line.startsWith("import ")).join("\n");
   vm.runInNewContext(stripTypeScriptTypes(source), {
     Deno: { env: { get: (key) => env[key] }, serve: (fn) => { handler = fn; } },
     createClient: () => ({ auth: { getUser: async () => ({ data: { user: options.user === false ? null : { id: "user-a" } } }) }, from: () => query }),
@@ -23,7 +25,7 @@ function edge(name, options = {}) {
 
 test("funções não acessam provedores sem sessão ou membership", async () => {
   for (const name of ["market-data", "open-finance"]) {
-    for (const options of [{ membership: null }, { user: false }]) {
+    for (const options of [{ membership: null }, { user: false }, { membership: null, crlf: true }]) {
       const h = edge(name, options);
       assert.equal((await h.request()).status, 403);
       assert.equal(h.calls.length, 0);
