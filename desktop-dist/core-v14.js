@@ -1,7 +1,10 @@
 (() => {
   const invoke = window.__TAURI__?.core?.invoke;
 
-  const TYPES = ["transactions", "accounts", "cards", "categories", "investments", "settings"];
+  const TYPES = [
+    "transactions", "accounts", "cards", "categories", "investments", "investment_goals",
+    "market_data", "open_finance_connections", "open_finance_accounts", "open_finance_bills", "settings",
+  ];
   const PAYMENT_METHODS = {
     pix: "PIX",
     transfer: "Transferência",
@@ -106,6 +109,11 @@
   const cards = () => S.data.cards || [];
   const categories = () => S.data.categories || [];
   const investments = () => S.data.investments || [];
+  const investmentGoals = () => S.data.investment_goals || [];
+  const marketData = () => S.data.market_data || [];
+  const openFinanceConnections = () => S.data.open_finance_connections || [];
+  const openFinanceAccounts = () => S.data.open_finance_accounts || [];
+  const openFinanceBills = () => S.data.open_finance_bills || [];
   const accountById = (id) => accounts().find((item) => item.id === id);
   const cardById = (id) => cards().find((item) => item.id === id);
   const categoryById = (id) => categories().find((item) => item.id === id);
@@ -569,7 +577,9 @@
     ESSENTIAL_CATEGORIES, DEFAULT_SETTINGS,
     today, monthOf, nextMonth, money, pct, parseMoney, inputMoney, uid,
     list, save, bulkSave, remove, load,
-    tx, accounts, cards, categories, investments, accountById, cardById, categoryById,
+    tx, accounts, cards, categories, investments, investmentGoals, marketData,
+    openFinanceConnections, openFinanceAccounts, openFinanceBills,
+    accountById, cardById, categoryById,
     categoryByName, categoryName, accountName, cardName,
     buildDate, addMonths, splitAmount, firstCardDueDate, effectiveDate, effectiveMonth,
     isExpense, isIncome, isTransfer, isCardPayment, isCardPurchase,

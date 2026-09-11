@@ -73,6 +73,8 @@ jobs:
             "desktop-dist/auth-recovery-v16.js",
             "desktop-dist/cloud-config.js",
             "desktop-dist/cloud-runtime-v16.js",
+            "desktop-dist/app-v17.js",
+            "desktop-dist/advanced-v17.css",
             "desktop-dist/styles.css",
             "desktop-dist/security-v16.css",
             "src-tauri/src/lib_operational.rs",
@@ -81,9 +83,14 @@ jobs:
             "supabase/migrations/001_identity_workspaces.sql",
             "supabase/migrations/005_workspace_self_service_and_client_sync.sql",
             "supabase/migrations/006_workspace_discovery_owner_identity.sql",
+            "supabase/migrations/008_advanced_financial_entities.sql",
             "supabase/functions/invite-user/index.ts",
             "supabase/functions/manage-members/index.ts",
-            "supabase/functions/reset-password/index.ts"
+            "supabase/functions/reset-password/index.ts",
+            "supabase/functions/market-data/index.ts",
+            "supabase/functions/open-finance/index.ts",
+            "tests/core-v14.test.mjs",
+            "tests/app-v17-render.test.mjs"
           )
           foreach ($path in $required) {
             if (-not (Test-Path $path)) { throw "Arquivo obrigatório não encontrado: $path" }
@@ -96,6 +103,7 @@ jobs:
           node --check desktop-dist/auth-recovery-v16.js
           node --check desktop-dist/cloud-config.js
           node --check desktop-dist/cloud-runtime-v16.js
+          node --check desktop-dist/app-v17.js
 
           $index = Get-Content "desktop-dist/index.html" -Raw
           $core = Get-Content "desktop-dist/core-v14.js" -Raw
@@ -104,12 +112,13 @@ jobs:
           $auth = Get-Content "desktop-dist/auth-v16.js" -Raw
           $cloudConfig = Get-Content "desktop-dist/cloud-config.js" -Raw
           $cloudClient = Get-Content "desktop-dist/cloud-runtime-v16.js" -Raw
+          $advanced = Get-Content "desktop-dist/app-v17.js" -Raw
           $rust = Get-Content "src-tauri/src/lib_operational.rs" -Raw
           $rustCloud = Get-Content "src-tauri/src/cloud_runtime_v16.rs" -Raw
           $rustSecurity = Get-Content "src-tauri/src/security_v16.rs" -Raw
           $cargo = Get-Content "src-tauri/Cargo.toml" -Raw
           $migration = Get-Content "supabase/migrations/001_identity_workspaces.sql" -Raw
-          $frontend = "$index`n$core`n$app`n$pro`n$auth`n$cloudConfig`n$cloudClient"
+          $frontend = "$index`n$core`n$app`n$pro`n$advanced`n$auth`n$cloudConfig`n$cloudClient"
           $backend = "$rust`n$rustCloud`n$rustSecurity`n$cargo"
 
           if ($frontend -match "window.location.replace") { throw "O aplicativo voltou a depender de redirecionamento remoto." }
@@ -145,11 +154,15 @@ jobs:
           if ($backend -notmatch "password_hash" -or $backend -notmatch "hash_password") { throw "Senha offline não está protegida por hash." }
           if ($backend -match "password\s+TEXT\s+NOT NULL") { throw "Campo de senha em texto claro detectado." }
           if ($migration -notmatch "enable row level security" -or $migration -notmatch "fs_can") { throw "RLS/permissões multi-tenant ausentes." }
-          if ($index -notmatch "cloud-runtime-v16.js" -or $index -notmatch "auth-v16.js") { throw "Camada cloud/autenticação 1.6 não está carregada." }
+          if ($index -notmatch "cloud-runtime-v16.js" -or $index -notmatch "auth-v16.js") { throw "Camada cloud/autenticação não está carregada." }
           if ($cloudClient -notmatch "grant_type=password" -or $cloudClient -notmatch "cloud_reconcile_login" -or $cloudClient -notmatch "manage-members") { throw "Login Supabase ou gestão cloud não está ativa no cliente." }
+          if ($advanced -notmatch "open-finance" -or $advanced -notmatch "market-data" -or $advanced -notmatch "Aurora" -or $advanced -notmatch "investment_goals") { throw "Módulos avançados da versão 1.7 estão incompletos." }
           if ($rustSecurity -notmatch "Scope::User") { throw "Chave SQLCipher não está protegida no escopo do usuário Windows." }
 
-          Write-Host "Frontend/backend 1.6 validados: finanças, Supabase Auth, workspaces, sync, SQLCipher/DPAPI, RLS e updater seguro."
+          Write-Host "Frontend/backend 1.7 validados: finanças, Open Finance, indicadores BCB, Aurora, Supabase Auth, sync, SQLCipher/DPAPI, RLS e updater seguro."
+
+      - name: Testar cálculos financeiros do frontend
+        run: npm run test:financial
 
       - name: Testar banco local, autenticação e relações financeiras
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib
@@ -224,7 +237,7 @@ jobs:
           Copy-Item $sourceInstaller.FullName $assetPath -Force
           git tag -f desktop-preview $env:GITHUB_SHA
           git push origin desktop-preview --force
-          $notes = "Finança Simples 1.6: autenticação Supabase por e-mail e senha, workspaces isolados, permissões por módulo, sincronização offline-first, banco SQLCipher protegido pelo Windows, backup consistente e atualização assinada quando habilitada."
+          $notes = "Finança Simples 1.7: paridade com a planilha Essencial 2025, Open Finance seguro via servidor, indicadores oficiais do Banco Central, carteira, metas, agente Aurora, simuladores, workspaces isolados, sincronização offline-first, SQLCipher/DPAPI e atualização assinada quando habilitada."
           gh release view desktop-preview 2>$null
           if ($LASTEXITCODE -ne 0) {
             gh release create desktop-preview $assetPath --prerelease --title "Finança Simples para Windows" --notes $notes

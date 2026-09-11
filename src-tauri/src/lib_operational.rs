@@ -293,6 +293,11 @@ fn validate_entity_type(entity_type: &str) -> Result<(), String> {
         "cards",
         "categories",
         "investments",
+        "investment_goals",
+        "market_data",
+        "open_finance_connections",
+        "open_finance_accounts",
+        "open_finance_bills",
         "settings",
     ];
     if allowed.contains(&entity_type) {
@@ -306,7 +311,8 @@ pub(crate) fn entity_module(entity_type: &str) -> &'static str {
     match entity_type {
         "transactions" => "transactions",
         "accounts" | "cards" => "accounts",
-        "investments" => "investments",
+        "investments" | "investment_goals" | "market_data" => "investments",
+        "open_finance_connections" | "open_finance_accounts" | "open_finance_bills" => "openFinance",
         "categories" | "settings" => "settings",
         _ => "settings",
     }
@@ -424,7 +430,7 @@ fn configure_database(connection: &Connection) -> Result<(), String> {
                ON audit_log(workspace_id, created_at DESC);
 
              INSERT OR REPLACE INTO app_metadata(key, value)
-             VALUES ('schema_version', '6');
+             VALUES ('schema_version', '7');
              INSERT OR REPLACE INTO app_metadata(key, value)
              VALUES ('product_scope', 'financa-simples');
              INSERT OR REPLACE INTO app_metadata(key, value)
@@ -1260,12 +1266,12 @@ fn export_snapshot(db: State<'_, LocalDb>, auth: State<'_, AuthState>) -> Result
     let connection=db.connection.lock().map_err(|_|"banco local indisponível".to_string())?;
     let mut statement=connection.prepare(
         "SELECT id,entity_type,data_json,version,sync_state,created_at,updated_at FROM entities
-         WHERE workspace_id=?1 AND deleted=0 AND entity_type IN ('transactions','accounts','cards','categories','investments','settings')
+         WHERE workspace_id=?1 AND deleted=0 AND entity_type IN ('transactions','accounts','cards','categories','investments','investment_goals','market_data','open_finance_connections','open_finance_accounts','open_finance_bills','settings')
          ORDER BY entity_type,updated_at"
     ).map_err(|error|error.to_string())?;
     let rows=statement.query_map(params![workspace_id],entity_from_row).map_err(|error|error.to_string())?
         .collect::<Result<Vec<_>,_>>().map_err(|error|error.to_string())?;
-    Ok(json!({"product":"Finança Simples","schemaVersion":6,"generatedAt":Utc::now().to_rfc3339(),"workspaceId":workspace_id,"entities":rows}))
+    Ok(json!({"product":"Finança Simples","schemaVersion":7,"generatedAt":Utc::now().to_rfc3339(),"workspaceId":workspace_id,"entities":rows}))
 }
 
 fn create_backup_internal(db:&LocalDb)->Result<String,String>{
@@ -1398,16 +1404,16 @@ mod tests{
 
     #[test]
     fn escopo_aceita_apenas_entidades_financeiras(){
-        for entity_type in ["transactions","accounts","cards","categories","investments","settings"]{assert!(validate_entity_type(entity_type).is_ok());}
+        for entity_type in ["transactions","accounts","cards","categories","investments","investment_goals","market_data","open_finance_connections","open_finance_accounts","open_finance_bills","settings"]{assert!(validate_entity_type(entity_type).is_ok());}
         for entity_type in ["products","inventory","employees","quotes","customers","suppliers"]{assert!(validate_entity_type(entity_type).is_err());}
     }
 
     #[test]
-    fn banco_local_configura_schema_seis(){
+    fn banco_local_configura_schema_sete(){
         let connection=Connection::open_in_memory().expect("sqlite em memória");
         configure_database(&connection).expect("configurar banco");
         let version:String=connection.query_row("SELECT value FROM app_metadata WHERE key='schema_version'",[],|row|row.get(0)).unwrap();
-        assert_eq!(version,"6");
+        assert_eq!(version,"7");
         assert!(table_has_column(&connection,"entities","workspace_id").unwrap());
     }
 

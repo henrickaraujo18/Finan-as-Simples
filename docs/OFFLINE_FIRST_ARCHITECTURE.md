@@ -1,160 +1,85 @@
-# Finança Simples — Arquitetura Offline-First
+# Finança Simples — arquitetura offline-first
 
 ## Princípio
 
-O aplicativo Windows é o sistema principal. A internet amplia capacidades, mas não é requisito para abrir o programa, consultar dados já existentes ou executar a operação financeira essencial.
+O aplicativo Windows é o produto principal. A internet amplia as capacidades, mas não é requisito para abrir o programa, consultar dados já sincronizados ou executar a operação financeira essencial.
 
-A interface, as regras de negócio essenciais e o banco primário do dispositivo são embarcados no instalador. Serviços remotos são tratados como integrações sincronizáveis.
+O Finança Simples é independente do sistema Seja Doce. Produtos, precificação, estoque, funcionários e folha não pertencem a este repositório.
 
 ## Camadas
 
-```text
-Tauri / Windows
-│
-├── Frontend embarcado
-│   ├── Dashboard
-│   ├── Lançamentos
-│   ├── Contas
-│   ├── Orçamentos
-│   ├── Produtos / precificação
-│   ├── Estoque
-│   ├── Gestão de funcionários
-│   ├── DRE / balanço / fluxo de caixa
-│   └── Relatórios / exportações
-│
-├── Núcleo Rust
-│   ├── regras locais
-│   ├── validação
-│   ├── SQLite
-│   ├── cache de serviços
-│   ├── outbox de sincronização
-│   └── backup / recuperação
-│
-└── Internet quando disponível
-    ├── API de sincronização
-    ├── Open Finance / Pluggy
-    ├── cotações
-    ├── regras e tabelas tributárias atualizadas
-    ├── agente / IA
-    └── atualização do aplicativo
+```mermaid
+flowchart TD
+  UI[Frontend Windows] --> CORE[Núcleo Rust]
+  CORE --> DB[(SQLite + SQLCipher)]
+  CORE --> SYNC[Sincronização]
+  SYNC --> SB[(Supabase + RLS)]
+  UI --> EDGE[Edge Functions autenticadas]
+  EDGE --> BCB[Banco Central]
+  EDGE --> PLUGGY[Pluggy / Open Finance]
 ```
 
-## Matriz de disponibilidade
+O SQLite é a base primária do dispositivo. O Supabase replica entidades autorizadas por workspace, e as Edge Functions intermediam integrações que exigem execução no servidor.
+
+## Disponibilidade
 
 | Função | Offline | Online |
 |---|---|---|
-| Abrir o sistema | Completo | Completo |
-| Consultar histórico | Completo | Completo + sincronizado |
-| Lançar receita/despesa | Completo | Completo + sincronização |
-| Contas, categorias e centros de custo | Completo | Completo + sincronização |
-| Orçamentos | Completo | Completo + compartilhamento/sincronização |
-| Precificação | Completo com parâmetros locais | Atualiza parâmetros externos |
-| Estoque | Completo | Completo + sincronização |
-| Funcionários e folha gerencial | Completo com regras em cache | Atualiza tabelas/regras |
-| DRE, balanço e fluxo de caixa | Completo | Completo |
-| PDF/CSV/relatórios | Completo | Completo |
-| Open Finance | Últimos dados sincronizados | Sincronização ativa |
-| Cotações | Último valor em cache, com data | Tempo real |
-| IA/agente | Histórico e fila de solicitações | Respostas e ações conectadas |
-| Atualizações do app | Versão instalada continua operando | Busca e instala nova versão assinada |
+| Abrir e autenticar no dispositivo conhecido | Completo | Completo |
+| Consultar e alterar lançamentos | Completo | Completo + sincronização |
+| Contas, cartões, categorias e transferências | Completo | Completo + sincronização |
+| Dashboards mensal, anual e analítico | Completo | Completo |
+| Carteira, metas, Aurora e simuladores | Completo com dados salvos | Completo + indicadores atualizados |
+| Open Finance | Últimos dados sincronizados | Consentimento e sincronização ativa |
+| Indicadores BCB | Último valor salvo, com data | Atualização pelo servidor |
+| Backup e exportações | Completo | Completo |
+| Atualizações do app | Versão instalada permanece funcional | Busca e instala pacote assinado |
 
 ## Banco local
 
-SQLite é o armazenamento transacional do dispositivo.
-
-Requisitos:
-
 - `foreign_keys = ON`;
-- journal `WAL`;
-- `busy_timeout`;
-- migrações versionadas;
+- journal WAL e `busy_timeout`;
 - valores monetários em centavos inteiros;
-- UUID por entidade criada no cliente;
-- exclusões sincronizáveis via tombstone, não remoção imediata;
-- datas em ISO 8601;
-- backups consistentes e retenção configurável.
+- IDs UUID para entidades locais;
+- exclusões sincronizáveis por tombstone;
+- datas ISO 8601;
+- banco SQLCipher no Windows;
+- chave local protegida por DPAPI no escopo do usuário;
+- backup consistente antes de atualização.
 
 ## Sincronização
 
-Toda alteração local relevante grava, na mesma transação do dado, um registro na `sync_queue` (outbox pattern).
+Cada entidade contém versão, estado de sincronização e data de atualização. Alterações locais são enviadas quando a sessão online existe; alterações remotas autorizadas são aplicadas no SQLite.
 
-O servidor deve aceitar uma `idempotency_key` para que repetir um envio não duplique registros.
+Política atual de conflito:
 
-Fluxo esperado:
+- a versão mais alta vence;
+- no empate, a atualização mais recente é usada;
+- dados pendentes locais não são sobrescritos por uma cópia remota mais antiga;
+- permissões são verificadas antes de upload e pela RLS no servidor.
 
-1. usuário altera dados localmente;
-2. SQLite confirma o commit;
-3. registro correspondente já existe na outbox;
-4. quando houver internet, o sincronizador envia lotes;
-5. servidor confirma versão/revisão;
-6. item local passa para `synced`;
-7. alterações remotas são recebidas por cursor incremental;
-8. conflitos são resolvidos por política explícita, nunca silenciosamente.
+## Cache de integrações
 
-## Conflitos
-
-Cada entidade sincronizada deve evoluir para conter:
-
-- `id` UUID;
-- `local_revision`;
-- `remote_revision`;
-- `updated_at`;
-- `device_id`;
-- `deleted_at` opcional.
-
-Política inicial:
-
-- dados bancários importados: servidor/integração é autoridade;
-- lançamentos manuais ainda não sincronizados: cliente é autoridade;
-- cadastros editados em dois dispositivos: manter ambas as revisões e solicitar resolução quando houver alteração concorrente real;
-- nunca usar somente `updated_at` como garantia de consistência.
-
-## Cache de serviços
-
-Open Finance, cotações e regras tributárias devem gravar a última resposta válida com:
-
-- payload;
-- data da atualização;
-- validade/expiração;
-- origem;
-- versão da regra quando aplicável.
-
-No modo offline a interface deve mostrar a idade do cache e não apresentar dados antigos como se fossem atuais.
+Contas e faturas Open Finance, além dos indicadores BCB, são salvos como entidades do workspace. No modo offline, a interface exibe a data da última sincronização e não apresenta o cache como uma consulta em tempo real.
 
 ## Segurança
 
-Nunca armazenar no frontend ou no repositório:
-
-- Client Secret do Pluggy;
-- chave privada do updater;
-- chaves privadas de IA;
-- credenciais bancárias.
-
-Segredos de integração ficam somente no backend. O desktop recebe tokens de sessão/referências com escopo e expiração.
-
-O armazenamento local deverá evoluir com proteção de segredos pelo sistema operacional e mecanismo de bloqueio local opcional.
-
-## Atualização
-
-O aplicativo deve continuar utilizável se o servidor de atualização estiver indisponível.
-
-Atualizações do Tauri serão reativadas somente com:
-
-- chave pública configurada no cliente;
-- artefatos assinados;
-- chave privada apenas no CI/segredo do repositório;
-- rollback/teste de inicialização antes de promoção;
-- migrações do banco compatíveis com atualização e recuperação.
+- Credenciais Pluggy ficam somente nas Edge Functions.
+- A chave secreta/service role do Supabase não entra no cliente.
+- O token temporário do widget Open Finance permanece em memória.
+- Cada chamada avançada valida JWT, membership e permissão do módulo.
+- O CSP permite somente os endpoints necessários do Supabase e do widget Pluggy.
+- Atualizações automáticas exigem assinatura Tauri válida.
 
 ## Regra de desenvolvimento
 
-Nenhuma funcionalidade essencial pode depender de `window.location`, iframe ou carregamento obrigatório do site hospedado.
+Nenhuma função essencial pode depender de redirecionamento, iframe obrigatório ou carregamento do site hospedado.
 
 Uma versão só pode ser promovida se:
 
-1. compilar em Windows;
-2. abrir sem console;
-3. criar/abrir o SQLite local;
-4. permanecer executando no smoke test;
-5. continuar abrindo com o endpoint remoto indisponível;
-6. preservar os dados locais de uma versão anterior.
+1. os testes financeiros e Rust passarem;
+2. o frontend e as configurações forem validados;
+3. o instalador compilar em Windows;
+4. o executável permanecer aberto no smoke test;
+5. o banco anterior puder ser aberto sem perda de dados;
+6. a aplicação continuar funcional sem os serviços remotos.

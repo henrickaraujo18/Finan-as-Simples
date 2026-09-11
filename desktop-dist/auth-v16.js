@@ -155,8 +155,8 @@
       try {
         const result = await rawInvoke("auth_request_password_reset", { email: values.email });
         const suffix = cloudConfigured()
-          ? " O backend de e-mail ainda será vinculado à conta em nuvem desta instalação."
-          : " O envio por e-mail será ativado quando o backend de identidade em nuvem for conectado.";
+          ? ""
+          : " Conecte o backend de identidade para habilitar o envio por e-mail.";
         statusMessage(message, `${result.message}${suffix}`);
       } catch (error) {
         statusMessage(message, "Se existir uma conta vinculada a este e-mail, as instruções de recuperação serão enviadas.");
@@ -348,7 +348,7 @@
 
     const canManage = auth.status.user?.isSuperAdmin || modulePermission("users", "create") || modulePermission("users", "edit");
     const cloudText = cloudConfigured()
-      ? "Backend configurado. A próxima etapa é vincular as contas locais ao provedor de identidade para sincronização multi-dispositivo."
+      ? "Identidade e sincronização em nuvem disponíveis quando a sessão está online."
       : "Modo local protegido ativo. Para convites remotos, redefinição por e-mail e sincronização entre computadores, conecte o backend Supabase.";
 
     view.innerHTML = `<section class="hero access-hero"><div><h2>Usuários & Acessos</h2><p>Controle quem entra em cada ambiente e o que cada pessoa pode visualizar ou alterar.</p></div><span class="tag ok">${esc(active?.name || "Ambiente")}</span></section>
@@ -361,7 +361,7 @@
       ${auth.status.user?.isSuperAdmin ? `<section class="panel"><div class="panel-head"><div><h3>Novo ambiente financeiro</h3><small>Use um ambiente separado para cada cliente que não deve compartilhar dados.</small></div></div><form id="workspaceForm" class="form panel-body"><div class="form-grid"><label class="wide">Nome do ambiente<input name="name" required maxlength="120" placeholder="Ex.: Empresa Cliente ABC"></label></div><div class="button-row"><button class="primary">Criar ambiente</button><span id="workspaceMsg" class="form-msg"></span></div></form></section>` : ""}
 
       <div class="two-col access-columns">
-        <section class="panel"><div class="panel-head"><div><h3>${auth.editingMemberId ? "Editar permissões" : "Adicionar acesso"}</h3><small>${cloudConfigured() ? "Conta local nesta versão; convite remoto será ativado com a sincronização do backend." : "Cria ou vincula um usuário local a este ambiente."}</small></div></div>
+        <section class="panel"><div class="panel-head"><div><h3>${auth.editingMemberId ? "Editar permissões" : "Adicionar acesso"}</h3><small>${cloudConfigured() ? "O usuário receberá um convite por e-mail para ativar o acesso." : "Cria ou vincula um usuário local a este ambiente."}</small></div></div>
           <form id="memberForm" class="form panel-body ${canManage ? "" : "permission-readonly"}">
             <div class="form-grid">
               <label class="wide">E-mail<input name="email" type="email" required ${auth.editingMemberId ? "readonly" : ""}></label>

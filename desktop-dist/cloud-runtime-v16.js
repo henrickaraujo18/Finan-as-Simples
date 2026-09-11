@@ -399,6 +399,8 @@
 
   window.FSCloudRuntime = Object.freeze({
     sync: syncNow,
+    edge,
+    online: cloudOnline,
     isAuthenticated: () => Boolean(state.accessToken),
     clear: clearCloudSession,
   });
