@@ -1,66 +1,88 @@
 # Finança Simples para Windows
 
-O **Finança Simples** é um aplicativo de controle financeiro para Windows construído com Tauri 2 e banco SQLite local. Ele é uma aplicação independente do sistema **Seja Doce** e não contém módulos de produtos, precificação, estoque, funcionários ou folha.
+O **Finança Simples** é um aplicativo Windows offline-first de organização financeira, criado a partir das regras da planilha **Finança Simples - Essencial 2025**. O app usa Tauri 2, banco SQLite/SQLCipher local e sincronização opcional pelo Supabase.
 
-## Escopo do Finança Simples
+Ele é independente do sistema **Seja Doce** e não contém produtos, precificação, estoque, funcionários ou folha de pagamento.
 
-- **Dashboard**: saldo atual, saldo previsto, receitas realizadas, receitas a receber, despesas realizadas, despesas a pagar, resultado do período, movimento diário, despesas por categoria e comprometimento de cartão em relação à renda média parametrizada.
-- **Lançamentos**: receitas e despesas, realizado/pendente, conta, categoria, forma de pagamento, vencimento, edição, baixa e exclusão.
-- **Importação de fatura**: importação local de CSV com data, descrição e valor, sem enviar o arquivo para serviços externos.
-- **Open Finance**: cadastro manual de contas funciona offline. A conexão automática somente será habilitada quando existir backend seguro; credenciais nunca devem ser embarcadas no executável.
-- **Investimentos**: cadastro de posições, quantidade, preço médio, preço atual e resultado. Cotações automáticas somente serão ativadas quando o serviço online estiver integrado.
-- **Parametrização**: saldo inicial, renda média mensal, limite de cartões, conta padrão, integridade do banco, backup SQLite e exportação JSON.
+## Estado desta versão
 
-## Armazenamento e funcionamento offline
+A versão **1.7 está em homologação**, em branch de revisão. Não é uma entrega completa de produção. A planilha foi usada como referência funcional e não foi alterada. Consulte [critérios de aceite e pendências](docs/VALIDATION-1.7.md).
 
-No Windows, os dados ficam em SQLite no diretório de dados do aplicativo. O banco usa WAL, `busy_timeout` e verificação `PRAGMA quick_check`. O Finança Simples não depende de um site privado para abrir e continua funcionando sem internet para suas funções locais.
+## Funcionalidades implementadas no código
 
-A versão 1.2.0 não apaga automaticamente registros antigos de módulos que foram incluídos por engano em builds anteriores. Esses tipos deixam de ser aceitos e não aparecem na interface, evitando perda acidental de dados.
+### Planilha Essencial 2025
+
+- dashboard mensal com entradas, saídas, resultado, saldo atual e projetado;
+- valores realizados, a pagar e a receber;
+- saldo inicial, crescimento e renda média mensal;
+- lançadores de saída, entrada e compra no cartão;
+- despesas e receitas fixas ou variáveis;
+- parcelamento em até 60 vezes com conservação exata dos centavos;
+- cartões com fechamento, vencimento, limite e categoria de fatura;
+- faturas do mês e do mês seguinte, pagamento e prevenção de contagem dupla;
+- rankings de despesas, receitas, cartões e categorias;
+- dashboard analítico por período e resumo anual;
+- contas bancárias, dinheiro e transferências entre contas;
+- categorias originais da planilha, com possibilidade de personalização.
+
+### Recursos do sistema
+
+- autenticação por e-mail e senha, ambientes financeiros isolados e permissões por módulo;
+- operação financeira essencial offline em dispositivo já autenticado; sincronização implementada, ainda pendente de teste ponta a ponta com usuários reais;
+- banco local criptografado no Windows, chave protegida por DPAPI, backup consistente e recuperação;
+- importação local de fatura CSV, exportação CSV/JSON e impressão em PDF;
+- carteira de investimentos, metas, perfil de risco e acompanhamento de liquidez;
+- indicadores de dólar, Selic e IPCA obtidos no servidor a partir do Banco Central e mantidos em cache local;
+- **Aurora**, agente financeiro baseado em regras, com alertas sobre liquidez, orçamento, reserva e metas;
+- simuladores de investimentos, empréstimos, financiamentos e consórcios;
+- estrutura de Open Finance/Pluggy para cache de saldos e faturas; nova conexão e renovação desativadas até homologação de segurança;
+- atualização automática assinada quando o canal de assinatura de produção estiver configurado.
+
+## Arquitetura e segurança
+
+- Os dados do usuário ficam primeiro no SQLite local e continuam disponíveis offline.
+- O Supabase Auth identifica o usuário e a Row Level Security isola cada `workspace`.
+- Dados de Open Finance também respeitam a permissão do ambiente.
+- A interface não carrega scripts remotos com acesso ao Tauri. A emissão de novos tokens bancários está bloqueada nesta revisão.
+- `PLUGGY_CLIENT_ID`, `PLUGGY_CLIENT_SECRET`, chaves secretas do Supabase e a chave privada do updater nunca entram no frontend, no instalador ou no repositório.
+- A chave publicável do Supabase pode existir no cliente; a proteção dos dados é feita pela identidade do usuário, permissões e RLS.
+
+## Estado das integrações externas
+
+Open Finance não está operacional para novas conexões. São necessários consentimento em contexto isolado, credenciais Pluggy cadastradas diretamente nos segredos do Supabase, validação de paginação/campos e testes de sincronização e revogação. O app ainda não importa transações bancárias automaticamente.
+
+Aurora usa regras locais, não IA generativa. Cotações de ativos individuais são manuais. O site anterior e o desktop ainda não usam a mesma persistência.
+
+O atualizador só publica `latest.json` quando o GitHub Actions possui o par de assinatura Tauri. Sem ele, o pipeline publica um instalador normal, mas não oferece uma atualização não assinada.
 
 ## Desenvolvimento
 
 Pré-requisitos no Windows:
 
-- Node.js 22 ou superior
-- Rust estável
-- Microsoft C++ Build Tools
-- WebView2 Runtime
-
-```powershell
-npm install
-npm run dev
-```
-
-Para gerar o instalador NSIS:
+- Node.js 22 ou superior;
+- Rust estável;
+- Microsoft C++ Build Tools;
+- WebView2 Runtime.
 
 ```powershell
 npm ci
+npm run test:financial
+npm run dev
+```
+
+Para gerar o instalador NSIS sem canal de atualização:
+
+```powershell
 npm run build -- --config src-tauri/tauri.unsigned.conf.json --bundles nsis
 ```
 
 ## Validação automática
 
-O workflow Windows executa:
+O workflow Windows valida a sintaxe do frontend, o escopo do produto, as funções avançadas obrigatórias, os cálculos financeiros em Node, os testes Rust, o núcleo Tauri, a compilação NSIS e um smoke test do executável. Em pull requests o instalador é somente um artefato de teste: não é publicado no canal principal. O smoke test apenas confirma que o processo permanece aberto; não comprova os fluxos completos.
 
-1. validação sintática do frontend com `node --check`;
-2. trava de escopo para impedir reentrada de módulos da Seja Doce;
-3. testes Rust do banco e dos tipos permitidos;
-4. `cargo check`;
-5. compilação NSIS;
-6. smoke test abrindo o executável por 15 segundos;
-7. publicação do instalador somente após os testes passarem.
+Consulte também:
 
-## Segurança
-
-Nunca coloque no código, no Tauri ou no GitHub público:
-
-- Client Secret ou API keys do Pluggy/Open Finance;
-- chaves de IA;
-- senhas bancárias;
-- chave privada de assinatura do atualizador.
-
-Credenciais que tenham sido expostas anteriormente devem ser rotacionadas antes de qualquer integração de produção.
-
-## Atualizações automáticas
-
-A atualização automática assinada do executável será reativada somente com um canal de assinatura configurado e testado. Até lá, builds de manutenção são distribuídas como novos instaladores para não repetir a falha de inicialização causada por configuração incompleta do updater.
+- [`docs/FEATURE-MATRIX.md`](docs/FEATURE-MATRIX.md)
+- [`docs/CLOUD-AND-UPDATES.md`](docs/CLOUD-AND-UPDATES.md)
+- [`docs/SECURITY-1.7.md`](docs/SECURITY-1.7.md)
+- [`docs/SUPABASE-DEPLOY.md`](docs/SUPABASE-DEPLOY.md)
