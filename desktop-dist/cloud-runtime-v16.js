@@ -192,7 +192,12 @@
       if (error instanceof CloudError && [400, 401].includes(error.status)) {
         clearCloudSession();
         const created = await signUp(email, password);
+        if (created?.user?.identities && created.user.identities.length === 0) {
+          clearCloudSession();
+          throw new Error("Esta conta já existe na nuvem com outra senha. Use ‘Esqueci minha senha’ para recuperar o acesso.");
+        }
         if (!created?.access_token) {
+          clearCloudSession();
           throw new Error("Conta criada. Confirme seu e-mail e depois volte ao Finança Simples com o mesmo e-mail e senha.");
         }
         const local = await nativeInvoke("auth_setup_owner", { email, password, workspaceName });
