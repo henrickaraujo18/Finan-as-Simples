@@ -12,7 +12,7 @@
     refreshPromise: null,
     syncPromise: null,
     timer: null,
-    lastPassword: "",
+    generation: 0,
   };
 
   const authBase = `${cfg.supabaseUrl}/auth/v1`;
@@ -37,17 +37,17 @@
   }
 
   function clearCloudSession() {
+    state.generation++;
     state.accessToken = "";
     state.refreshToken = "";
     state.expiresAt = 0;
-    state.lastPassword = "";
+    clearTimeout(state.timer);
   }
 
-  function setCloudSession(payload, password = "") {
+  function setCloudSession(payload) {
     state.accessToken = payload?.access_token || "";
     state.refreshToken = payload?.refresh_token || "";
     state.expiresAt = Date.now() + Math.max(30, Number(payload?.expires_in || 3600) - 60) * 1000;
-    if (password) state.lastPassword = password;
   }
 
   async function parseResponse(response, fallback) {
@@ -81,6 +81,7 @@
   }
 
   async function refreshSession() {
+    const generation = state.generation;
     if (!state.refreshToken) throw new CloudError("Sessão online expirada. Entre novamente.", 401, "session_expired");
     const response = await fetch(`${authBase}/token?grant_type=refresh_token`, {
       method: "POST",
@@ -88,7 +89,8 @@
       body: JSON.stringify({ refresh_token: state.refreshToken }),
     });
     const payload = await parseResponse(response, "Não foi possível renovar a sessão.");
-    setCloudSession(payload, state.lastPassword);
+    if (generation !== state.generation) throw new CloudError("Sessão encerrada.", 401, "session_expired");
+    setCloudSession(payload);
     return payload;
   }
 
@@ -335,7 +337,6 @@
     });
     await parseResponse(response, "Não foi possível alterar a senha.");
     const result = await nativeInvoke("auth_change_password", args);
-    state.lastPassword = args.newPassword;
     return result;
   }
 
@@ -352,8 +353,17 @@
       if (["upsert_entity", "upsert_entities", "delete_entity"].includes(command)) scheduleSync(80);
       return result;
     }
-    if (command === "auth_setup_owner") return cloudOwnerSetup(args);
-    if (command === "auth_login") return cloudLogin(args);
+    if (command === "auth_setup_owner" || command === "auth_login") {
+      clearCloudSession();
+      try {
+        return await (command === "auth_login" ? cloudLogin(args) : cloudOwnerSetup(args));
+      } catch (error) {
+        // Um login cloud recusado não pode deixar uma sessão local parcialmente aberta.
+        clearCloudSession();
+        await nativeInvoke("auth_logout").catch(() => {});
+        throw error;
+      }
+    }
     if (command === "auth_request_password_reset") return requestReset(args.email);
     if (command === "auth_list_members") return cloudListMembers(args.workspaceId);
     if (command === "auth_create_or_grant_user") return cloudInvite(args.input);

@@ -19,6 +19,7 @@
     investmentEdit: "",
     goalEdit: "",
     marketBusy: false,
+    quotesBusy: false,
     marketAttemptedWorkspace: "",
     openFinanceBusy: "",
     openFinanceConfigured: null,
@@ -45,7 +46,7 @@
 
   function friendlyCloudError(error) {
     const code = String(error?.code || error?.message || error || "");
-    if (code.includes("provider_not_configured")) return "A integração está pronta, mas as credenciais da Pluggy ainda não foram cadastradas no servidor.";
+    if (code.includes("provider_not_configured")) return "As credenciais da Pluggy não estão configuradas no servidor.";
     if (code.includes("forbidden")) return "Seu usuário não possui permissão para esta operação neste ambiente.";
     if (code.includes("no_session") || code.includes("Sessão online")) return "Entre com a conta online para usar este recurso.";
     if (code.includes("Failed to fetch") || code.includes("NetworkError")) return "Não foi possível acessar o serviço. Verifique a internet e tente novamente.";
@@ -93,11 +94,11 @@
 
   function investmentTable() {
     const rows = [...investments()].sort((a, b) => Number(b.currentPriceCents || 0) * Number(b.quantity || 0) - Number(a.currentPriceCents || 0) * Number(a.quantity || 0));
-    return `<section class="panel"><div class="panel-head"><div><h3>Carteira</h3><small>Posição consolidada por ativo.</small></div></div><div class="table-wrap"><table><thead><tr><th>Ativo</th><th>Tipo</th><th>Instituição</th><th>Liquidez</th><th class="right">Custo</th><th class="right">Atual</th><th class="right">Resultado</th><th></th></tr></thead><tbody>${rows.length ? rows.map((item) => {
+    return `<section class="panel"><div class="panel-head"><div><h3>Carteira</h3><small>Preços manuais ou última cotação consultada; podem ter atraso.</small></div><button class="ghost" data-v17-action="refresh-quotes" ${state.quotesBusy || !canUseCloud() || !can("investments", "edit") ? "disabled" : ""}>${state.quotesBusy ? "Consultando..." : "Atualizar cotações B3"}</button></div><div class="table-wrap"><table><thead><tr><th>Ativo</th><th>Tipo</th><th>Instituição</th><th>Liquidez</th><th class="right">Custo</th><th class="right">Atual</th><th class="right">Resultado</th><th></th></tr></thead><tbody>${rows.length ? rows.map((item) => {
       const cost = Math.round(Number(item.quantity || 0) * Number(item.averagePriceCents || 0));
       const current = Math.round(Number(item.quantity || 0) * Number(item.currentPriceCents || 0));
       const gain = current - cost;
-      return `<tr><td><strong>${esc(item.name)}</strong>${item.ticker ? `<small class="table-sub">${esc(item.ticker)}</small>` : ""}</td><td>${esc(item.type || "Outro")}</td><td>${esc(item.institution || "—")}</td><td>${item.liquidityDays == null || item.liquidityDays === "" ? "Não informada" : Number(item.liquidityDays) <= 1 ? "Diária" : `${Number(item.liquidityDays)} dias`}</td><td class="right">${esc(money(cost))}</td><td class="right">${esc(money(current))}</td><td class="right ${gain >= 0 ? "income" : "expense"}">${gain >= 0 ? "+" : "−"}${esc(money(Math.abs(gain)))}</td><td class="actions-cell"><button class="ghost compact" data-v17-action="edit-investment" data-id="${esc(item.id)}">Editar</button><button class="ghost compact danger" data-v17-action="delete-investment" data-id="${esc(item.id)}">Excluir</button></td></tr>`;
+      return `<tr><td><strong>${esc(item.name)}</strong>${item.ticker ? `<small class="table-sub">${esc(item.ticker)}</small>` : ""}</td><td>${esc(item.type || "Outro")}</td><td>${esc(item.institution || "—")}</td><td>${item.liquidityDays == null || item.liquidityDays === "" ? "Não informada" : Number(item.liquidityDays) <= 1 ? "Diária" : `${Number(item.liquidityDays)} dias`}</td><td class="right">${esc(money(cost))}</td><td class="right">${esc(money(current))}<small class="table-sub">${esc(item.priceSource || "manual")}${item.priceDate ? ` · ${esc(timeLabel(item.priceDate))}` : ""}</small></td><td class="right ${gain >= 0 ? "income" : "expense"}">${gain >= 0 ? "+" : "−"}${esc(money(Math.abs(gain)))}</td><td class="actions-cell"><button class="ghost compact" data-v17-action="edit-investment" data-id="${esc(item.id)}">Editar</button><button class="ghost compact danger" data-v17-action="delete-investment" data-id="${esc(item.id)}">Excluir</button></td></tr>`;
     }).join("") : `<tr><td colspan="8" class="empty">Nenhuma posição cadastrada.</td></tr>`}</tbody></table></div></section>`;
   }
 
@@ -110,40 +111,8 @@
     }).join("") : `<div class="empty">Nenhuma meta cadastrada.</div>`}</div></section></div>`;
   }
 
-  const plans = {
-    conservative: [["Reserva em Tesouro Selic/CDB diário", 60], ["CDB, LCI e LCA com prazos escalonados", 30], ["Fundos/ETFs amplos de baixa exposição", 10]],
-    balanced: [["Reserva em Tesouro Selic/CDB diário", 40], ["CDB, LCI e LCA com prazos escalonados", 30], ["ETFs e ações diversificadas", 20], ["Proteção cambial/internacional", 10]],
-    growth: [["Reserva em Tesouro Selic/CDB diário", 25], ["Renda fixa de médio prazo", 20], ["ETFs e ações diversificadas", 40], ["Proteção cambial/internacional", 15]],
-  };
-
-  function advisorInsights() {
-    const summary = investmentSummary();
-    const monthly = monthMetrics(S.month);
-    const rows = [];
-    if (!investments().length) rows.push(["attention", "Carteira ainda vazia", "Cadastre seus investimentos para que a análise use valores, liquidez e vencimentos reais."]);
-    else if (summary.liquidShare < 25) rows.push(["critical", "Liquidez baixa", `Apenas ${pct(summary.liquidShare)} da carteira possui liquidez em até um dia. Fortaleça a reserva antes de aumentar posições longas.`]);
-    else rows.push(["good", "Liquidez acompanhada", `${pct(summary.liquidShare)} da carteira pode ser resgatada em até um dia.`]);
-    const averageIncome = Number(S.settings.averageMonthlyIncomeCents || 0);
-    if (averageIncome && monthly.expensePaid > averageIncome) rows.push(["critical", "Saídas acima da renda média", `As saídas realizadas superaram a renda média cadastrada em ${pct((monthly.expensePaid / averageIncome - 1) * 100)}.`]);
-    else if (averageIncome && monthly.expensePaid > averageIncome * .8) rows.push(["attention", "Renda quase comprometida", `${pct(monthly.expensePaid / averageIncome * 100)} da renda média já foi consumida pelas saídas realizadas.`]);
-    const reserveGoal = Number(S.settings.emergencyReserveGoalCents || 0);
-    if (reserveGoal && totalCashBalance() < reserveGoal) rows.push(["attention", "Reserva em construção", `Faltam ${money(Math.max(0, reserveGoal - totalCashBalance()))} para a meta de reserva configurada.`]);
-    const selic = marketData().find((item) => item.key === "selic");
-    if (Number(selic?.value || 0) >= 10) rows.push(["good", "Renda fixa em destaque", `Com a Selic em ${Number(selic.value).toFixed(2).replace(".", ",")}% a.a., compare liquidez, vencimento, risco e rendimento líquido.`]);
-    for (const goal of investmentGoals()) {
-      const progress = Number(goal.targetCents || 0) ? Number(goal.currentCents || 0) / Number(goal.targetCents) : 0;
-      const days = Math.ceil((new Date(`${goal.targetDate}T12:00:00`).getTime() - Date.now()) / 86400000);
-      if (days < 0 && progress < 1) rows.push(["critical", `Meta não atingida: ${goal.name}`, `O prazo terminou com ${pct(progress * 100)} do valor acumulado.`]);
-      else if (days <= 90 && progress < .75) rows.push(["attention", `Meta exige atenção: ${goal.name}`, `Faltam ${Math.max(0, days)} dias e ${pct(progress * 100)} do objetivo foi acumulado.`]);
-    }
-    if (!rows.length) rows.push(["good", "Organização em dia", "Os dados cadastrados não indicam um alerta imediato. Continue atualizando lançamentos, carteira e metas."]);
-    return rows;
-  }
-
   function advisorPanel() {
-    const profile = ["conservative", "balanced", "growth"].includes(S.settings.riskProfile) ? S.settings.riskProfile : "balanced";
-    const profileLabel = { conservative: "conservador", balanced: "equilibrado", growth: "crescimento" }[profile];
-    return `<div class="advisor-grid"><section class="panel aurora-panel"><div class="panel-head"><div><span class="eyebrow">Aurora</span><h3>Agente financeiro digital</h3><small>Análise automatizada do orçamento, da carteira e das metas.</small></div></div><div class="advisor-list">${advisorInsights().map(([level, title, text]) => `<article class="advisor-alert ${level}"><i></i><div><strong>${esc(title)}</strong><p>${esc(text)}</p></div></article>`).join("")}<p class="legal-note">Aurora usa regras financeiras e os dados cadastrados. Não executa operações, não possui certificação profissional e não substitui suitability ou orientação de assessor autorizado.</p></div></section><section class="panel"><div class="panel-head"><div><h3>Carteira de referência</h3><small>Distribuição educativa para o perfil ${esc(profileLabel)}.</small></div></div><div class="panel-body"><form id="riskProfileForm" class="form"><label>Perfil<select name="riskProfile"><option value="conservative" ${profile === "conservative" ? "selected" : ""}>Conservador</option><option value="balanced" ${profile === "balanced" ? "selected" : ""}>Equilibrado</option><option value="growth" ${profile === "growth" ? "selected" : ""}>Crescimento</option></select></label></form><div class="allocation-list">${plans[profile].map(([name, share]) => `<div><span><strong>${esc(name)}</strong><b>${share}%</b></span><i><em style="width:${share}%"></em></i></div>`).join("")}</div><p class="legal-note">Referência educativa, não recomendação individual de investimento.</p></div></section></div>`;
+    return window.FSAurora?.panel() || '<section class="panel"><p>Aurora não carregou. Reinicie o aplicativo.</p></section>';
   }
 
   function simulatorsPanel() {
@@ -162,6 +131,7 @@
     view.innerHTML = `<section class="advanced-hero"><div><span class="eyebrow">Patrimônio</span><h2>Investimentos e planejamento</h2><p>Carteira, metas, indicadores oficiais, análises automatizadas e simuladores — separados do fluxo financeiro do dia a dia.</p></div><div class="hero-stat"><span>Patrimônio acompanhado</span><strong>${esc(money(m.current))}</strong></div></section>${messageBox()}<div class="advanced-tabs"><button class="${state.investmentTab === "portfolio" ? "active" : ""}" data-v17-tab="portfolio">Carteira</button><button class="${state.investmentTab === "advisor" ? "active" : ""}" data-v17-tab="advisor">Aurora · Agente</button><button class="${state.investmentTab === "simulators" ? "active" : ""}" data-v17-tab="simulators">Simuladores</button></div>${state.investmentTab === "portfolio" ? `${marketCards()}<section class="kpi-grid">${[["Total aplicado", m.cost], ["Valor atual", m.current], ["Resultado", m.gain]].map(([label, value]) => `<article class="kpi"><span>${label}</span><strong>${esc(money(value))}</strong></article>`).join("")}<article class="kpi"><span>Liquidez diária</span><strong>${esc(pct(m.liquidShare))}</strong><small>da carteira atual</small></article></section><div class="two-col investment-layout">${investmentForm()}<section class="panel"><div class="panel-head"><div><h3>Como preencher a posição</h3><small>Informações usadas pela carteira e pela Aurora.</small></div></div><div class="panel-body guidance-list"><p><strong>Quantidade × preço médio</strong><span>Forma o total aplicado.</span></p><p><strong>Quantidade × preço atual</strong><span>Forma o valor atual e o resultado.</span></p><p><strong>Liquidez</strong><span>Ajuda a avaliar a disponibilidade da reserva.</span></p><p><strong>Taxa e vencimento</strong><span>Servem como referência; o app não promete rentabilidade.</span></p></div></section></div>${investmentTable()}${goalsPanel()}` : state.investmentTab === "advisor" ? advisorPanel() : simulatorsPanel()}`;
     $("pageTitle").textContent = "Investimentos";
     bindInvestmentEvents();
+    if (state.investmentTab === "advisor") window.FSAurora?.bind(() => renderInvestments(true));
     if (state.investmentTab === "simulators") updateSimulator();
     autoRefreshMarket();
   }
@@ -206,6 +176,36 @@
     if (freshest && Date.now() - freshest < 20 * 60 * 60 * 1000) return;
     state.marketAttemptedWorkspace = id;
     queueMicrotask(() => refreshMarket(false));
+  }
+
+  async function refreshQuotes() {
+    if (state.quotesBusy || !canUseCloud() || !can("investments", "edit")) return;
+    const positions = investments().filter(p => ["Ação", "ETF", "FII"].includes(p.type) && /^[A-Z]{4}\\d{1,2}$/.test(p.ticker || ""));
+    if (!positions.length) { setMessage("Cadastre um ticker B3 válido em uma ação, ETF ou FII.", true); renderInvestments(true); return; }
+    const operation = workspaceOperation();
+    state.quotesBusy = true; setMessage(""); renderInvestments(true);
+    try {
+      const symbols = [...new Set(positions.map(p => p.ticker))];
+      let updated = 0;
+      for (let index = 0; index < symbols.length; index += 20) {
+        const result = await cloud().edge("market-data", { action: "quotes", workspaceId: operation.id, symbols: symbols.slice(index, index + 20) });
+        operation.assertCurrent();
+        for (const quote of result.quotes || []) {
+          if (!Number.isSafeInteger(quote.priceCents) || quote.priceCents <= 0 || quote.currency !== "BRL" || quote.resolvedSymbol !== quote.symbol) continue;
+          for (const previous of positions.filter(p => p.ticker === quote.symbol)) {
+            const current = investments().find(p => p.id === previous.id);
+            // Não substitui uma posição editada durante a consulta nem regrede a data do preço.
+            if (!current || current._updatedAt !== previous._updatedAt || (current.priceDate && Date.parse(current.priceDate) > Date.parse(quote.referenceDate))) continue;
+            await save("investments", { ...current, currentPriceCents: quote.priceCents, priceSource: quote.source, priceDate: quote.referenceDate, priceCheckedAt: quote.checkedAt }, current.id);
+            updated++;
+          }
+        }
+      }
+      await reloadInvestments(updated + " posição(ões) atualizada(s). Confira fonte e data; valores indisponíveis foram preservados.");
+    } catch (error) {
+      const code = String(error.code || error.message);
+      await reloadInvestments(code.includes("quotes_not_configured") ? "As cotações individuais aguardam a chave brapi no servidor." : "Não foi possível concluir todas as cotações. Os preços anteriores foram preservados onde não houve resposta válida.", true);
+    } finally { state.quotesBusy = false; operation.release(); renderInvestments(true); }
   }
 
   async function saveSettingsPatch(patch) {
@@ -253,6 +253,7 @@
     $("view")?.querySelectorAll("[data-v17-action]").forEach((button) => button.addEventListener("click", async () => {
       const action = button.dataset.v17Action; const id = button.dataset.id;
       if (action === "refresh-market") return refreshMarket(true);
+      if (action === "refresh-quotes") return refreshQuotes();
       if (action === "cancel-investment") { state.investmentEdit = ""; return renderInvestments(true); }
       if (action === "cancel-goal") { state.goalEdit = ""; return renderInvestments(true); }
       if (action === "edit-investment") { state.investmentEdit = id; return renderInvestments(true); }

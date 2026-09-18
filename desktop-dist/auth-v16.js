@@ -8,6 +8,7 @@
     status: null,
     gateShown: false,
     updateChecked: false,
+    updateTimer: null,
     editingMemberId: null,
     switching: false,
     workspaceLocks: 0,
@@ -535,13 +536,21 @@
         ? (result.available ? `Atualizando para ${result.version}...` : "Atualizações: em dia")
         : "Atualizações automáticas: aguardando assinatura";
     } catch (error) {
+      if (state) state.textContent = "Atualizações: falha na verificação; nova tentativa em 15 minutos";
+      scheduleUpdater(15 * 60 * 1000);
+      return;
+    } finally {
       auth.updateChecked = false;
-      if (state) state.textContent = "Atualizações: nova tentativa quando houver conexão";
     }
+    scheduleUpdater(6 * 60 * 60 * 1000);
   }
 
-  function scheduleUpdater() {
-    setTimeout(checkAutomaticUpdate, 1800);
+  function scheduleUpdater(delay = 20000) {
+    if (auth.updateTimer != null) clearTimeout(auth.updateTimer);
+    auth.updateTimer = setTimeout(() => {
+      auth.updateTimer = null;
+      checkAutomaticUpdate();
+    }, delay);
   }
 
   C.load = async function securedLoad() {
@@ -550,7 +559,7 @@
     setTimeout(() => {
       installChrome();
       applyPermissions();
-      scheduleUpdater();
+      if (auth.updateTimer == null && !auth.updateChecked) scheduleUpdater();
     }, 0);
     return result;
   };
@@ -606,7 +615,6 @@
   observer.observe(document.body, { childList: true, subtree: true });
 
   window.addEventListener("online", () => {
-    auth.updateChecked = false;
-    scheduleUpdater();
+    if (!auth.updateChecked) scheduleUpdater();
   });
 })();

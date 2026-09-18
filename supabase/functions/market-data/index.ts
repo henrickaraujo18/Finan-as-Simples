@@ -61,6 +61,27 @@ async function fetchSeries(key: SeriesKey) {
   }
 }
 
+async function quotes(symbols: unknown) {
+  if (!Array.isArray(symbols) || !symbols.length || symbols.length > 20 || symbols.some(s => typeof s !== 'string' || !/^[A-Z]{4}\d{1,2}$/.test(s))) return respond({ error: 'invalid_symbols' }, 400)
+  const token = Deno.env.get('BRAPI_TOKEN')
+  if (!token) return respond({ error: 'quotes_not_configured' }, 503)
+  const requested = [...new Set(symbols as string[])]
+  const sourceUrl = `https://brapi.dev/api/v2/stocks/quote?symbols=${requested.join(',')}`
+  const response = await fetch(sourceUrl, { headers: { Authorization: `Bearer ${token}`, accept: 'application/json' }, signal: AbortSignal.timeout(10000) })
+  if (!response.ok) return respond({ error: response.status === 429 ? 'quotes_rate_limited' : 'quotes_unavailable' }, response.status === 429 ? 429 : 502)
+  const body = await response.json()
+  const checkedAt = new Date().toISOString()
+  const normalized = requested.map(symbol => {
+    const item = (Array.isArray(body.results) ? body.results : []).find((r: any) => (r.requestedSymbol || r.symbol) === symbol)
+    const data = item?.data
+    const timestamp = Date.parse(data?.regularMarketTime)
+    const price = data?.regularMarketPrice
+    const valid = typeof price === 'number' && Number.isFinite(price) && price > 0 && Number.isSafeInteger(Math.round(price * 100)) && data.currency === 'BRL' && Number.isFinite(timestamp) && timestamp <= Date.now() + 300000
+    return { symbol, resolvedSymbol: item?.symbol || symbol, priceCents: valid ? Math.round(price * 100) : null, currency: 'BRL', referenceDate: valid ? new Date(timestamp).toISOString() : null, stale: !valid || Date.now() - timestamp > 36 * 3600000, source: 'brapi', sourceUrl, checkedAt, error: valid ? null : 'quote_unavailable' }
+  })
+  return respond({ source: 'brapi', checkedAt, quotes: normalized }, normalized.every(q => q.priceCents === null) ? 503 : 200)
+}
+
 Deno.serve(async (request: Request) => {
   if (request.method === 'OPTIONS') return new Response('ok', { headers })
   if (request.method !== 'POST') return respond({ error: 'method_not_allowed' }, 405)
@@ -68,6 +89,7 @@ Deno.serve(async (request: Request) => {
     const body = await request.json().catch(() => ({})) as Record<string, unknown>
     const workspaceId = String(body.workspaceId ?? '')
     if (!await authorize(request, workspaceId, 'view')) return respond({ error: 'forbidden' }, 403)
+    if (body.action === 'quotes') return await quotes(body.symbols)
     const indicators = await Promise.all((Object.keys(SERIES) as SeriesKey[]).map(fetchSeries))
     if (indicators.every((item) => item.value === null)) return respond({ error: 'market_data_unavailable', indicators }, 503)
     return respond({ source: 'Banco Central do Brasil', checkedAt: new Date().toISOString(), indicators })
