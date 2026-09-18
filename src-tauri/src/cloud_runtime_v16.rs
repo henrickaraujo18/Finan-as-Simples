@@ -399,10 +399,15 @@ async fn remote_rows(
     token: &str,
     workspace_id: &str,
 ) -> Result<Vec<RemoteEntity>, String> {
+    let mut all = Vec::new();
+    loop {
     let response = headers(
         http.get(format!("{SUPABASE_URL}/rest/v1/financial_entities"))
             .query(&[
                 ("workspace_id", format!("eq.{workspace_id}")),
+                ("order", "id.asc".to_string()),
+                ("limit", "500".to_string()),
+                ("offset", all.len().to_string()),
                 (
                     "select",
                     "id,workspace_id,entity_type,data_json,version,deleted,updated_by,created_at,updated_at"
@@ -417,10 +422,14 @@ async fn remote_rows(
     if !response.status().is_success() {
         return Err(response_error(response, "falha ao baixar dados cloud").await);
     }
-    response
+    let page = response
         .json::<Vec<RemoteEntity>>()
         .await
-        .map_err(|error| format!("dados cloud inválidos: {error}"))
+        .map_err(|error| format!("dados cloud inválidos: {error}"))?;
+    let done = page.len() < 500;
+    all.extend(page);
+    if done { return Ok(all); }
+    }
 }
 
 fn apply_remote(connection: &Connection, remote: &RemoteEntity) -> Result<(), String> {
@@ -509,6 +518,15 @@ pub(crate) async fn cloud_sync(
         .lock()
         .map_err(|_| "sessão indisponível".to_string())?
         .clone();
+    let local_email: String = {
+        let connection = db.connection.lock().map_err(|_| "banco local indisponível".to_string())?;
+        connection.query_row("SELECT email FROM users WHERE id=?1 AND active=1", params![session.user_id], |row| row.get(0))
+            .map_err(|_| "sessão local inválida".to_string())?
+    };
+    // Contas originadas offline mantêm UUID local; reconcile vincula pelo e-mail validado.
+    if cloud_user.email.as_deref().map(normalize_email).as_deref() != Some(normalize_email(&local_email).as_str()) {
+        return Err("a sessão local não corresponde à identidade cloud".to_string());
+    }
     let workspace_id = session
         .active_workspace_id
         .ok_or_else(|| "nenhum ambiente selecionado".to_string())?;
@@ -553,7 +571,7 @@ pub(crate) async fn cloud_sync(
             .unwrap_or(false);
 
         if local_dirty && !remote_newer {
-            let action = if remote.is_some() { "edit" } else { "create" };
+            let action = if local.deleted { "delete" } else if remote.is_some() { "edit" } else { "create" };
             let module = entity_module(&local.entity_type);
             if permission_allowed(&permissions, module, action) {
                 upload_local(
@@ -577,7 +595,16 @@ pub(crate) async fn cloud_sync(
         .connection
         .lock()
         .map_err(|_| "banco local indisponível".to_string())?;
+    // Releitura sob lock: o usuário pode ter editado durante as requisições HTTP.
+    let current_map: HashMap<String, LocalSyncEntity> = local_rows(&connection, &workspace_id)?
+        .into_iter().map(|row| (row.id.clone(), row)).collect();
     for remote in &remotes {
+        if let Some(current) = current_map.get(&remote.id) {
+            if local_map.get(&remote.id).map(|before| before.version != current.version || before.updated_at != current.updated_at).unwrap_or(true) {
+                skipped += 1;
+                continue;
+            }
+        }
         let local = local_map.get(&remote.id);
         let local_dirty = local
             .map(|row| row.sync_state != "synced")

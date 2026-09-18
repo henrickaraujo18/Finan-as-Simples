@@ -4,7 +4,7 @@
 window.FSCloudConfig = Object.freeze({
   supabaseUrl: "https://jozjcqskvkwxoaqmthrj.supabase.co",
   supabasePublishableKey: "sb_publishable_pIcoV3Oq9FZSzVvTXQy8GQ_5Zf9SXq8",
-  // Compatibilidade temporária com código 1.6 durante a ativação do backend.
+  // Alias mantido para compatibilidade com a camada de autenticação existente.
   supabaseAnonKey: "sb_publishable_pIcoV3Oq9FZSzVvTXQy8GQ_5Zf9SXq8",
   passwordResetRedirect: "https://jozjcqskvkwxoaqmthrj.supabase.co/functions/v1/reset-password",
   inviteFunction: "invite-user",

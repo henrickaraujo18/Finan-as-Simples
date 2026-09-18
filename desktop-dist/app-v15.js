@@ -354,7 +354,7 @@
 
   function updateNavigationLabel() {
     const annualButton = document.querySelector('.nav button[data-page="annual"] span');
-    if (annualButton) annualButton.textContent = "Dashboard Analítico";
+    if (annualButton && annualButton.textContent !== "Dashboard Analítico") annualButton.textContent = "Dashboard Analítico";
   }
 
   function enhance() {

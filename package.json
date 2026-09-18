@@ -1,12 +1,13 @@
 {
   "name": "financa-simples-desktop",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Finança Simples — aplicativo desktop offline-first para gestão financeira pessoal e de clientes.",
   "private": true,
   "scripts": {
     "tauri": "tauri",
     "dev": "tauri dev",
     "build": "tauri build",
+    "test:financial": "node --test tests/*.test.mjs",
     "signer:generate": "tauri signer generate"
   },
   "devDependencies": {
