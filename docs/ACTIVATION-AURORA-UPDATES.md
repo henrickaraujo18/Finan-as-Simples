@@ -20,6 +20,12 @@ Os conectores disponíveis nesta sessão não oferecem gravação de secrets. N�
 
 ## Evidência e limites
 
+Em 21/09/2026: projeto Supabase confirmado `ACTIVE_HEALTHY`; funções `market-data` v3 e `aurora` v1 publicadas com JWT obrigatório. Publicação não comprova configuração das chaves de provedores nem resposta autenticada real.
+
+CI Windows do commit `5de5038c769526fbdffca8f58a8e0b0777916788`: run 104 (`35345354303`) concluído com sucesso, incluindo testes Rust, compilação NSIS e smoke test. Assinatura e publicação de release foram ignoradas no PR, como esperado. Há 40 testes Node aprovados localmente, incluindo o teste adicional da periodicidade do updater.
+
+`node tests/integration/cloud-live.mjs` executa autenticação, renovação, gravação e leitura por duas sessões reais da API, somente com as variáveis documentadas no script e um workspace descartável. Esse roteiro não foi executado por falta de credenciais de homologação; não substitui teste do aplicativo instalado. Nunca coloque a senha no código ou nos logs.
+
 Testes locais usam mocks de rede: não equivalem a login real, envio de e-mail, resposta real da IA, cotação contratada ou sincronização entre computadores. A compilação e os testes Rust no CI Windows verificam código nativo, incluindo SQLCipher/DPAPI e restauração em diretório temporário. O smoke test de processo não prova interação com telas.
 
 Para aceite final em Windows: autenticar conta de homologação; criar lançamento offline; reconectar e confirmar em segundo dispositivo; editar em ambos e conferir política de conflito; testar logout/renovação; criar backup portátil; alterar um lançamento; restaurar com chave incorreta (deve preservar dados), depois correta (deve recuperar o snapshot); reabrir e autenticar. Usar ambiente descartável para restauração, pois ela substitui o banco local inteiro. Validar recuperação de senha no e-mail da conta de teste. Não usar dados reais no relatório público.
