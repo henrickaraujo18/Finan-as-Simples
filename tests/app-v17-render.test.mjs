@@ -104,3 +104,9 @@ test("conexão remota não injeta scripts no contexto privilegiado do aplicativo
   assert.equal(config.app.security.csp["frame-src"], "'none'");
   assert.match(render("openfinance").view.innerHTML, /Nova conexão e renovação indisponíveis/);
 });
+
+
+test("Open Finance permanece fora da navegação principal da 1.7", () => {
+  const html = readFileSync(new URL("../desktop-dist/index.html", import.meta.url), "utf8");
+  assert.doesNotMatch(html, /data-page="openfinance"/);
+});
