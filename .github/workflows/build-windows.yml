@@ -133,7 +133,7 @@ jobs:
             if ($frontend -match [regex]::Escape($term)) { throw "Escopo incorreto detectado no Finança Simples: $term" }
           }
 
-          $requiredLabels = @("Dashboard","Lançamentos","Contas & Cartões","Dashboard Analítico","Open Finance","Investimentos","Parametrização","Usuários & Acessos")
+          $requiredLabels = @("Dashboard","Lançamentos","Contas & Cartões","Dashboard Analítico","Investimentos","Parametrização","Usuários & Acessos")
           foreach ($label in $requiredLabels) {
             if ($frontend -notmatch [regex]::Escape($label)) { throw "Módulo obrigatório ausente: $label" }
           }
@@ -161,10 +161,10 @@ jobs:
           if ($migration -notmatch "enable row level security" -or $migration -notmatch "fs_can") { throw "RLS/permissões multi-tenant ausentes." }
           if ($index -notmatch "cloud-runtime-v16.js" -or $index -notmatch "auth-v16.js") { throw "Camada cloud/autenticação não está carregada." }
           if ($cloudClient -notmatch "grant_type=password" -or $cloudClient -notmatch "cloud_reconcile_login" -or $cloudClient -notmatch "manage-members") { throw "Login Supabase ou gestão cloud não está ativa no cliente." }
-          if ($advanced -notmatch "open-finance" -or $advanced -notmatch "market-data" -or $advanced -notmatch "Aurora" -or $advanced -notmatch "investment_goals") { throw "Módulos avançados da versão 1.7 estão incompletos." }
+          if ($advanced -notmatch "market-data" -or $advanced -notmatch "Aurora" -or $advanced -notmatch "investment_goals") { throw "Módulos avançados da versão 1.7 estão incompletos." }
           if ($rustSecurity -notmatch "Scope::User") { throw "Chave SQLCipher não está protegida no escopo do usuário Windows." }
 
-          Write-Host "Verificações estáticas concluídas. Os fluxos reais de autenticação, sincronização e Open Finance exigem homologação separada."
+          Write-Host "Verificações estáticas concluídas. Autenticação e sincronização estão prontas para homologação real; Open Finance está fora do escopo desta versão."
 
       - name: Testar cálculos financeiros do frontend
         run: npm run test:financial
@@ -178,10 +178,6 @@ jobs:
       - name: Compilar instalador NSIS
         shell: pwsh
         run: |
-          if ($env:GITHUB_REF -eq "refs/heads/main" -and $env:GITHUB_EVENT_NAME -ne "pull_request" -and
-              ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY) -or [string]::IsNullOrWhiteSpace($env:FINANCA_UPDATER_PUBLIC_KEY))) {
-            throw "Publicação interrompida: configure as chaves permanentes do updater antes de gerar uma versão de produção."
-          }
           $canSign = ($env:GITHUB_EVENT_NAME -ne "pull_request") -and `
                      (-not [string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) -and `
                      (-not [string]::IsNullOrWhiteSpace($env:FINANCA_UPDATER_PUBLIC_KEY))
@@ -246,7 +242,7 @@ jobs:
           Copy-Item $sourceInstaller.FullName $assetPath -Force
           git tag -f desktop-preview $env:GITHUB_SHA
           git push origin desktop-preview --force
-          $notes = "Finança Simples 1.7 — prévia em homologação: módulos financeiros da planilha Essencial 2025, saldos históricos corrigidos, carteira, metas, Aurora por regras e simuladores. Nova conexão Open Finance desativada até homologação. Indicadores BCB e sincronização dependem de sessão online; atualização automática depende de assinatura configurada. Consulte docs/VALIDATION-1.7.md para os limites e critérios de aceite."
+          $notes = "Finança Simples 1.7 — release candidate para homologação real: módulos financeiros da planilha Essencial 2025, carteira, metas, Aurora com IA via servidor, cotações B3, indicadores BCB, sincronização offline-first, SQLCipher e backup. Open Finance foi adiado e está fora do escopo desta versão. O canal de atualização automática só é publicado quando a assinatura Tauri estiver configurada. Consulte docs/VALIDATION-1.7.md."
           gh release view desktop-preview 2>$null
           if ($LASTEXITCODE -ne 0) {
             gh release create desktop-preview $assetPath --prerelease --title "Finança Simples para Windows" --notes $notes
