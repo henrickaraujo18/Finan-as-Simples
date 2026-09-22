@@ -1,60 +1,75 @@
-# Finança Simples — nuvem, Open Finance e atualizações
+# Finança Simples — nuvem e atualizações
 
 ## Supabase
 
-O cliente Windows contém apenas a URL pública e a chave publicável do projeto. A sessão de usuário é validada pelo Supabase Auth e cada registro financeiro possui um `workspace_id`.
+O cliente Windows contém apenas a URL pública e a chave publicável do projeto. A sessão é validada pelo Supabase Auth e os registros financeiros cloud pertencem a um `workspace_id`.
 
 Proteções ativas:
 
-- RLS em todas as tabelas públicas sensíveis;
-- workspaces e memberships para isolamento entre clientes;
+- RLS nas tabelas públicas sensíveis;
+- workspaces e memberships;
 - permissões por módulo e ação;
 - sincronização offline-first com controle de versão;
-- auditoria de operações administrativas;
+- auditoria administrativa;
 - helpers privilegiados fora do Data API público;
-- Edge Functions autenticadas para convites, gestão de membros, dados de mercado e Open Finance.
+- Edge Functions autenticadas para convites, gestão de membros, dados de mercado e Aurora.
 
-Nunca incluir no aplicativo ou no repositório:
+Nunca incluir no cliente ou repositório:
 
 - `sb_secret_...` ou `service_role`;
-- `PLUGGY_CLIENT_SECRET`;
 - chaves de IA;
-- senhas bancárias;
-- chave privada de assinatura do updater.
+- credenciais bancárias;
+- chave privada do updater.
+
+## Aurora
+
+A função `aurora` exige JWT e valida acesso aos módulos necessários antes de chamar o provedor.
+
+Segredos esperados no Supabase:
+
+- `OPENAI_API_KEY`;
+- `AURORA_MODEL`.
+
+A análise usa resumo financeiro limitado e é solicitada explicitamente pelo usuário. A resposta não altera dados nem executa operações financeiras.
+
+## Indicadores e cotações
+
+A função `market-data` fornece:
+
+- dólar comercial;
+- meta Selic;
+- IPCA mensal;
+- cotações B3 individuais para ações, ETFs e FIIs quando configurada.
+
+Para cotações B3, configurar `BRAPI_TOKEN` no servidor. Falhas externas não devem apagar ou substituir silenciosamente o último preço local válido.
 
 ## Open Finance
 
-Nova conexão e renovação estão bloqueadas nesta prévia, inclusive a emissão de tokens pela função. O widget não é carregado no contexto privilegiado do Tauri.
+**Adiado para uma etapa posterior.** Não faz parte do aceite da versão 1.7.
 
-O código existente verifica JWT, membership e permissão `openFinance` e contém consulta/revogação de itens vinculados ao workspace, além de cache de instituições, contas e faturas. Esses fluxos precisam de homologação com o provedor. Não há importação/conciliação automática de transações bancárias.
-
-Antes de produção: implementar consentimento isolado, validar campos e paginação da API e configurar `PLUGGY_CLIENT_ID` e `PLUGGY_CLIENT_SECRET` diretamente nos segredos das Edge Functions do Supabase. O token da API Pluggy nunca deve ser enviado ao aplicativo.
-
-## Indicadores do Banco Central
-
-A função autenticada `market-data` consulta o SGS do Banco Central para dólar comercial, meta Selic e IPCA mensal. O aplicativo mantém a última leitura no banco local para consulta offline.
+A infraestrutura já criada permanece preservada e protegida por autenticação/permissão, mas novas conexões e renovações continuam bloqueadas. O módulo foi removido da navegação principal para não interferir na homologação do restante do sistema.
 
 ## Atualização automática Tauri
 
-Fluxo de produção:
+Fluxo previsto:
 
 1. o app consulta `latest.json` quando há internet;
 2. uma versão superior dispara backup local;
 3. o updater baixa o instalador;
 4. a assinatura Tauri é validada;
-5. somente um artefato válido é instalado;
+5. somente artefato válido é instalado;
 6. o aplicativo reinicia.
 
-A publicação de `latest.json` é bloqueada quando a build não possui as chaves de assinatura.
+O CI pode gerar instalador de homologação mesmo sem assinatura. Porém `latest.json`, assinatura e canal automático **não são publicados** sem as chaves permanentes.
 
-Secrets exigidos no GitHub Actions:
+Secrets do GitHub Actions:
 
 - `TAURI_UPDATER_PUBLIC_KEY`;
 - `TAURI_SIGNING_PRIVATE_KEY`;
-- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (se aplicável).
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` quando aplicável.
 
-Gere o par com o Tauri CLI fora do repositório. A chave privada deve permanecer exclusivamente em armazenamento seguro/GitHub Actions Secrets e possuir cópia de recuperação.
+A chave privada deve ficar somente em armazenamento seguro/GitHub Actions Secrets.
 
 ## Primeira transição assinada
 
-Versões antigas sem uma chave pública de updater precisam receber manualmente o primeiro instalador assinado. Depois disso, versões futuras podem usar o canal automático.
+Uma instalação antiga que não contém a chave pública do updater precisa receber manualmente a primeira versão assinada. Depois disso, versões seguintes podem usar o canal automático.
