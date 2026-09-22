@@ -4,7 +4,7 @@
 
 Usuários e dados são entidades separadas. Cada registro financeiro pertence a um ambiente (`workspace`), e um usuário pode participar de mais de um ambiente com permissões diferentes.
 
-Papéis disponíveis: proprietário, administrador, operador, consulta e personalizado. As permissões cobrem Dashboard, Lançamentos, Contas & Cartões, Dashboard Analítico, Open Finance, Investimentos, Exportações, Parametrização e Usuários & Acessos.
+Papéis disponíveis: proprietário, administrador, operador, consulta e personalizado. As permissões cobrem Dashboard, Lançamentos, Contas & Cartões, Dashboard Analítico, Investimentos, Exportações, Parametrização e Usuários & Acessos. A permissão de Open Finance permanece reservada no modelo de dados para uma versão futura, mas o módulo está fora da navegação e do aceite da 1.7.
 
 ## Identidade e senhas
 
@@ -22,11 +22,11 @@ Todas as tabelas públicas sensíveis possuem RLS. A chave publicável do Supaba
 
 A sincronização replica apenas entidades do workspace ativo e respeita as permissões tanto no cliente quanto no banco.
 
-## Open Finance e mercado
+## Mercado e infraestrutura reservada de Open Finance
 
-As Edge Functions `open-finance` e `market-data` exigem JWT válido. Antes de acessar o provedor, a função confirma a membership e a permissão do módulo.
+A Edge Function `market-data` exige JWT válido e confirma membership/permissão antes de consultar indicadores ou cotações. A função `open-finance` permanece implantada apenas como infraestrutura reservada para etapa futura.
 
-Credenciais Pluggy ficam em segredos do servidor. A emissão de tokens de nova conexão/renovação está bloqueada nesta revisão até homologação em contexto isolado. Nenhum script remoto é carregado no contexto privilegiado do aplicativo. Contas e faturas salvas pertencem ao workspace.
+Open Finance foi adiado: a emissão de tokens de nova conexão/renovação está bloqueada e o módulo não aparece na navegação principal. Nenhum script remoto bancário é carregado no contexto privilegiado do aplicativo.
 
 Os testes automatizados usam mocks para validar a lógica das funções. Não substituem testes de JWT, RLS e consentimento com usuários e instituições reais.
 
