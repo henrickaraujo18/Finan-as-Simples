@@ -3,7 +3,7 @@
 ## Implementado nesta revisão
 
 - Updater: primeira consulta após 20 segundos, a cada seis horas, retomada online e nova tentativa após 15 minutos em caso de falha. O comando nativo cria backup consistente antes de instalar; a assinatura Tauri é obrigatória.
-- Publicação de produção falha se faltarem chaves; execução manual em outra branch não publica release.
+- O CI sempre pode gerar instalador de homologação. Sem as chaves permanentes, ele não publica o canal automático nem `latest.json`; execução em pull request também não publica release.
 - Login com erro limpa sessões parcialmente abertas. Senha não é mais retida pelo cliente para renovação do token. Uma renovação pendente não recria a sessão depois do logout.
 - Sincronização pagina leituras, verifica identidade, respeita permissão de exclusão e preserva edições locais realizadas durante o download. Conflitos entre dispositivos ainda seguem versão/data; não há merge de campos.
 - Teste Windows de SQLCipher restaura backup portátil e verifica que chave errada não altera o banco original.
@@ -20,7 +20,7 @@ Os conectores disponíveis nesta sessão não oferecem gravação de secrets. N�
 
 ## Evidência e limites
 
-Em 21/09/2026: projeto Supabase confirmado `ACTIVE_HEALTHY`; funções `market-data` v3 e `aurora` v1 publicadas com JWT obrigatório. Publicação não comprova configuração das chaves de provedores nem resposta autenticada real.
+Em 22/09/2026: projeto Supabase confirmado `ACTIVE_HEALTHY`; funções `market-data` v3 e `aurora` v1 publicadas com JWT obrigatório e correspondentes ao código do release candidate. O Security Advisor estava sem alertas. Isso não comprova configuração das chaves dos provedores nem resposta autenticada real.
 
 CI Windows do commit `5de5038c769526fbdffca8f58a8e0b0777916788`: run 104 (`35345354303`) concluído com sucesso, incluindo testes Rust, compilação NSIS e smoke test. Assinatura e publicação de release foram ignoradas no PR, como esperado. Há 40 testes Node aprovados localmente, incluindo o teste adicional da periodicidade do updater.
 
