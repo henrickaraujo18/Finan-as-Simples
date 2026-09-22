@@ -103,7 +103,7 @@
     const recent = tx().filter((item) => !isCardPayment(item)).sort((a, b) => String(b._updatedAt || effectiveDate(b)).localeCompare(String(a._updatedAt || effectiveDate(a)))).slice(0, 8);
     const cardRanks = cardRanking(S.month);
     const cardCats = cardCategoryRanking(S.month);
-    const growth = Number(S.settings.openingBalanceCents || 0) ? ((m.finalBalance - Number(S.settings.openingBalanceCents || 0)) / Math.abs(Number(S.settings.openingBalanceCents || 0))) * 100 : 0;
+    const growth = m.openingBalance ? ((m.finalBalance - m.openingBalance) / Math.abs(m.openingBalance)) * 100 : 0;
     return `<section class="hero"><div><h2>${esc(S.settings.profileName)}</h2><p>Visão de ${esc(monthLabel(S.month))} baseada no modelo Finança Simples - Essencial 2025.</p></div><div class="button-row"><button class="ghost" data-page="accounts">Contas & Cartões</button><button class="primary" data-page="transactions">Novo lançamento</button></div></section>
       <section class="report-toolbar panel"><label>Mês de análise<input id="month" type="month" value="${S.month}"></label><span class="muted">Cartão é acompanhado por ciclo de fatura; a compra não duplica a saída mensal.</span></section>
       <section class="kpi-grid">
@@ -111,7 +111,7 @@
         ${k("Entrada", money(m.incomePaid), `${money(m.incomePending)} a receber`)}
         ${k("Lucro do mês", money(m.resultPaid), `${money(m.toProfit)} a lucrar`)}
         ${k("Saldo atual/final", money(m.finalBalance), `previsão ${money(m.forecastBalance)}`)}
-        ${k("Saldo inicial", money(S.settings.openingBalanceCents), `${growth >= 0 ? "+" : ""}${pct(growth)} crescimento`)}
+        ${k("Saldo inicial", money(m.openingBalance), `${growth >= 0 ? "+" : ""}${pct(growth)} crescimento no mês`)}
         ${k("Faturas do mês", money(currentInvoices.reduce((s, g) => s + g.amountCents, 0)), `${currentInvoices.length} cartão(ões)`)}
         ${k("Faturas próximo mês", money(nextInvoices.reduce((s, g) => s + g.amountCents, 0)), esc(monthLabel(next)))}
         ${k("Gasto em cartão", money(m.cardSpent), S.settings.averageMonthlyIncomeCents ? `${pct(m.cardCommitmentPct)} da renda média` : "renda média não definida")}
@@ -245,6 +245,8 @@
 
   function render() {
     shell();
+    delete $("view").dataset.advancedV17;
+    delete $("view").dataset.proDashboard;
     const pages = { dashboard, transactions: transactionsPage, accounts: accountsPage, annual: annualPage, openfinance: openFinancePage, investments: investmentsPage, settings: settingsPage };
     $("view").innerHTML = (pages[S.page] || dashboard)();
     bindPage();
@@ -280,7 +282,13 @@
       const item = tx().find((row) => row.id === S.edit.transactions); if (!item) return;
       const values = formObject(event.currentTarget); const data = { ...item, description: values.description.trim(), amountCents: parseMoney(values.amount), date: values.date, dueDate: values.dueDate, categoryId: values.categoryId, status: values.status, counterparty: values.counterparty, accountId: values.accountId || "", notes: values.notes || "" };
       delete data.id; delete data._updatedAt;
-      try { await save("transactions", data, item.id); S.edit.transactions = null; await load(); render(); }
+      try {
+        if (data.amountCents <= 0) throw new Error("Informe um valor maior que zero.");
+        if (item.paymentMethod === "credit_card" && (data.status !== item.status || item.status === "paid")) throw new Error("A baixa de compras no cartão deve ser feita pela fatura. Compras quitadas não podem ser alteradas.");
+        if (data.status === "paid" && item.status !== "paid") data.paidAt = C.today();
+        if (data.status !== "paid") delete data.paidAt;
+        await save("transactions", data, item.id); S.edit.transactions = null; await load(); render();
+      }
       catch (error) { setMessage("editTxMsg", error.message || String(error), true); }
     });
     $("importForm")?.addEventListener("submit", async (event) => {

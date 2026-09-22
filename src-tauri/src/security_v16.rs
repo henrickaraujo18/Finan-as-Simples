@@ -367,6 +367,9 @@ mod tests {
         connection.execute_batch("CREATE TABLE app_metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL); INSERT INTO app_metadata(key,value) VALUES('product_scope','financa-simples'); CREATE TABLE probe(value TEXT NOT NULL); INSERT INTO probe(value) VALUES('antes');").unwrap();
         let (backup,key)=create_portable_backup(&connection,&db_path).unwrap();
         connection.execute("UPDATE probe SET value='depois'",[]).unwrap();
+        assert!(restore_portable_backup(&mut connection,&db_path,Path::new(&backup),&"00".repeat(32)).is_err());
+        let unchanged:String=connection.query_row("SELECT value FROM probe",[],|row|row.get(0)).unwrap();
+        assert_eq!(unchanged,"depois", "chave errada não pode alterar o banco em uso");
         restore_portable_backup(&mut connection,&db_path,Path::new(&backup),&key).unwrap();
         let value:String=connection.query_row("SELECT value FROM probe",[],|row|row.get(0)).unwrap();
         assert_eq!(value,"antes");

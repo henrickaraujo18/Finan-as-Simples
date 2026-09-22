@@ -1,56 +1,75 @@
-# Finança Simples — cloud e atualizações
+# Finança Simples — nuvem e atualizações
 
 ## Supabase
 
-Projeto dedicado criado em `sa-east-1`.
+O cliente Windows contém apenas a URL pública e a chave publicável do projeto. A sessão é validada pelo Supabase Auth e os registros financeiros cloud pertencem a um `workspace_id`.
 
-O cliente Windows recebe apenas:
-- URL pública do projeto;
-- publishable key `sb_publishable_...`.
+Proteções ativas:
 
-Nunca incluir no aplicativo ou no repositório:
-- `sb_secret_...`;
-- `service_role`;
-- credenciais Pluggy/Open Finance;
+- RLS nas tabelas públicas sensíveis;
+- workspaces e memberships;
+- permissões por módulo e ação;
+- sincronização offline-first com controle de versão;
+- auditoria administrativa;
+- helpers privilegiados fora do Data API público;
+- Edge Functions autenticadas para convites, gestão de membros, dados de mercado e Aurora.
+
+Nunca incluir no cliente ou repositório:
+
+- `sb_secret_...` ou `service_role`;
+- chaves de IA;
+- credenciais bancárias;
 - chave privada do updater.
 
-A base cloud utiliza RLS, workspaces, memberships, entidades financeiras e auditoria. Helpers privilegiados ficam no schema `private`, fora do Data API público.
+## Aurora
 
-Edge Functions:
-- `invite-user`: exige JWT válido e revalida permissão de gestão antes de usar a chave secreta no servidor;
-- `reset-password`: landing page pública para convite/recuperação, sem chave secreta e sem dependência JavaScript externa.
+A função `aurora` exige JWT e valida acesso aos módulos necessários antes de chamar o provedor.
+
+Segredos esperados no Supabase:
+
+- `OPENAI_API_KEY`;
+- `AURORA_MODEL`.
+
+A análise usa resumo financeiro limitado e é solicitada explicitamente pelo usuário. A resposta não altera dados nem executa operações financeiras.
+
+## Indicadores e cotações
+
+A função `market-data` fornece:
+
+- dólar comercial;
+- meta Selic;
+- IPCA mensal;
+- cotações B3 individuais para ações, ETFs e FIIs quando configurada.
+
+Para cotações B3, configurar `BRAPI_TOKEN` no servidor. Falhas externas não devem apagar ou substituir silenciosamente o último preço local válido.
+
+## Open Finance
+
+**Adiado para uma etapa posterior.** Não faz parte do aceite da versão 1.7.
+
+A infraestrutura já criada permanece preservada e protegida por autenticação/permissão, mas novas conexões e renovações continuam bloqueadas. O módulo foi removido da navegação principal para não interferir na homologação do restante do sistema.
 
 ## Atualização automática Tauri
 
-Fluxo de produção:
-1. usuário abre o Finança Simples;
-2. havendo internet, o app consulta o manifesto `latest.json` do release `desktop-preview`;
-3. uma versão superior dispara backup local;
-4. o updater baixa o instalador;
-5. a assinatura Tauri é validada;
-6. somente artefato válido é instalado;
-7. o app reinicia.
+Fluxo previsto:
 
-A publicação de `latest.json` é deliberadamente bloqueada quando a build não possui as chaves de assinatura.
+1. o app consulta `latest.json` quando há internet;
+2. uma versão superior dispara backup local;
+3. o updater baixa o instalador;
+4. a assinatura Tauri é validada;
+5. somente artefato válido é instalado;
+6. o aplicativo reinicia.
 
-### Secrets exigidos no GitHub Actions
+O CI pode gerar instalador de homologação mesmo sem assinatura. Porém `latest.json`, assinatura e canal automático **não são publicados** sem as chaves permanentes.
 
-- `TAURI_UPDATER_PUBLIC_KEY`
-- `TAURI_SIGNING_PRIVATE_KEY`
-- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (se a chave possuir senha)
+Secrets do GitHub Actions:
 
-Gerar o par com o Tauri CLI fora do repositório. A chave pública pode ser distribuída; a privada deve permanecer exclusivamente em armazenamento seguro/GitHub Actions Secrets e possuir cópia de recuperação fora do computador de desenvolvimento.
+- `TAURI_UPDATER_PUBLIC_KEY`;
+- `TAURI_SIGNING_PRIVATE_KEY`;
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` quando aplicável.
 
-## Primeira transição
+A chave privada deve ficar somente em armazenamento seguro/GitHub Actions Secrets.
 
-Versões antigas sem updater assinado precisam receber uma instalação manual da primeira 1.6 de produção. Depois disso, versões futuras podem ser instaladas automaticamente pelo canal assinado.
+## Primeira transição assinada
 
-## Estado atual da 1.6
-
-- Backend Supabase criado e conectado à configuração pública do app.
-- RLS ativo em todas as tabelas sensíveis.
-- Security Advisor sem alertas após mover helpers privilegiados para schema privado.
-- Edge Functions de convite e redefinição implantadas.
-- Aplicativo continua offline-first com autenticação/local workspaces nesta etapa de migração.
-- Ativação completa de identidade/sincronização cloud requer concluir o fluxo de sessão Supabase no cliente e configurar a URL de redirecionamento do Auth.
-- Auto-update exige o par de assinatura Tauri configurado em GitHub Actions Secrets antes da primeira build de produção assinada.
+Uma instalação antiga que não contém a chave pública do updater precisa receber manualmente a primeira versão assinada. Depois disso, versões seguintes podem usar o canal automático.
