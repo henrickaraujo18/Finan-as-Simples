@@ -19,7 +19,6 @@
     ["transactions", "Lançamentos"],
     ["accounts", "Contas & Cartões"],
     ["analytics", "Dashboard Analítico"],
-    ["openFinance", "Open Finance"],
     ["investments", "Investimentos"],
     ["exports", "Exportações"],
     ["settings", "Parametrização"],
@@ -321,10 +320,10 @@
     if (role === "admin") {
       MODULES.forEach(([module]) => { permissions[module] = { view: true, create: true, edit: true, delete: true }; });
     } else if (role === "operator") {
-      view("dashboard", "analytics", "openFinance", "exports");
+      view("dashboard", "analytics", "exports");
       manage("transactions", "accounts");
     } else if (role === "viewer") {
-      view("dashboard", "transactions", "accounts", "analytics", "openFinance", "investments");
+      view("dashboard", "transactions", "accounts", "analytics", "investments");
     }
     return permissions;
   }
@@ -334,7 +333,7 @@
       const canManage = !["dashboard", "analytics"].includes(module);
       const current = permissions[module] || {};
       const managed = Boolean(current.create || current.edit || current.delete);
-      return `<div class="permission-row ${["openFinance", "investments"].includes(module) ? "permission-highlight" : ""}">
+      return `<div class="permission-row ${module === "investments" ? "permission-highlight" : ""}">
         <strong>${esc(label)}</strong>
         <label><input type="checkbox" data-permission-module="${module}" data-permission-kind="view" ${current.view ? "checked" : ""}> Visualizar</label>
         <label class="${canManage ? "" : "muted-control"}"><input type="checkbox" data-permission-module="${module}" data-permission-kind="manage" ${managed ? "checked" : ""} ${canManage ? "" : "disabled"}> Alterar</label>
@@ -359,9 +358,8 @@
   }
 
   function memberBadges(member) {
-    const open = member.permissions?.openFinance?.view ? "Open Finance" : "Sem Open Finance";
     const invest = member.permissions?.investments?.view ? "Investimentos" : "Sem investimentos";
-    return `<span class="access-chip">${esc(open)}</span><span class="access-chip">${esc(invest)}</span>`;
+    return `<span class="access-chip">${esc(invest)}</span>`;
   }
 
   async function renderAccessPage() {
