@@ -81,3 +81,10 @@ test("operação em andamento bloqueia troca de ambiente e libera o seletor ao t
   assert.equal(h.auth.workspaceId(), "workspace-b");
   assert.equal(h.core.S.edit.transactions, null);
 });
+
+
+test("Open Finance fica fora da gestão de permissões da versão 1.7", () => {
+  const source = readFileSync(new URL("../desktop-dist/auth-v16.js", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /\["openFinance",\s*"Open Finance"\]/);
+  assert.doesNotMatch(source, /view\("dashboard",\s*"analytics",\s*"openFinance"/);
+});
