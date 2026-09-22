@@ -7,12 +7,14 @@ Esta etapa deve ser executada somente em um projeto Supabase dedicado ao Finanç
 1. Criar projeto.
 2. Aplicar, em ordem, todas as migrações de `supabase/migrations/001_*.sql` a `008_*.sql`.
 3. Criar a primeira conta do proprietário antes da abertura do cadastro a terceiros; no bootstrap atual, o primeiro perfil criado recebe o papel de administrador da plataforma.
-4. Implantar `invite-user`, `manage-members`, `market-data` e `open-finance` com verificação JWT habilitada.
+4. Implantar `invite-user`, `manage-members`, `market-data` e `aurora` com verificação JWT habilitada. A função `open-finance` pode permanecer implantada e bloqueada, mas não é requisito da 1.7.
 5. Implantar `reset-password` como endpoint público para o link de recuperação.
 6. Configurar os redirects do Auth para o endpoint de recuperação.
-7. Homologar primeiro o consentimento isolado e a API bancária; a versão atual bloqueia novos tokens/conexões. Configurar `PLUGGY_CLIENT_ID` e `PLUGGY_CLIENT_SECRET` somente como segredos das Edge Functions. Configurar credenciais, por si só, não remove o bloqueio de segurança.
+7. Configurar `OPENAI_API_KEY`, `AURORA_MODEL` e `BRAPI_TOKEN` apenas como segredos das Edge Functions quando esses serviços forem habilitados.
 8. Preencher no desktop somente `supabaseUrl`, chave publicável e URL de recuperação.
 9. Executar Security Advisor e testes de isolamento entre dois usuários/workspaces antes de habilitar sincronização real em produção.
+
+Open Finance/Pluggy foi adiado e será homologado em uma etapa própria.
 
 ## Testes mínimos de isolamento
 
