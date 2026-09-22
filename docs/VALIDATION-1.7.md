@@ -1,16 +1,30 @@
-# Validação e pendências — Finança Simples 1.7
+# Validação e aceite — Finança Simples 1.7
 
 ## Situação
 
-Versão de revisão, ainda não aprovada para produção. O app Windows é a base de implementação; o site anterior não foi alterado. O trabalho não deve ser descrito como “sistema completo” enquanto os critérios abaixo estiverem pendentes.
+A versão 1.7 é o **release candidate para homologação real no Windows**. O escopo desta entrega inclui o aplicativo financeiro desktop, autenticação, ambientes e permissões, sincronização offline-first, banco local criptografado, backup/restauração, investimentos, metas, indicadores, cotações B3, simuladores e Aurora com IA.
 
-## Implementado e testado automaticamente
+**Open Finance foi adiado para uma etapa posterior e não faz parte do critério de aceite da 1.7.** A infraestrutura já criada permanece preservada e bloqueada para novas conexões; o acesso foi retirado da navegação principal.
 
-30 testes Node cobrem cálculos de parcelas, ciclos de cartão, não duplicação de faturas, saldos históricos, baixa em atraso, simuladores, renderização em DOM simulado, convergência do cabeçalho, bloqueio de troca de ambiente, autorização das funções em mocks e indisponibilidade de indicadores.
+## Implementado e coberto por testes automáticos
 
-As alterações incluem carteira, metas, indicadores BCB, Aurora baseada em regras, simuladores e tipos de dados correspondentes no SQLite/Supabase. Scripts de terceiros não são carregados no contexto privilegiado do Tauri. Respostas bancárias parciais não apagam registros do cache.
+- dashboard mensal e analítico;
+- entradas, saídas, pendências, baixas e recorrências já suportadas pelo modelo atual;
+- cartões, fechamento, vencimento, parcelamento e pagamento de fatura sem contagem dupla;
+- contas, transferências e saldos históricos;
+- categorias e parametrização;
+- carteira de investimentos e metas;
+- indicadores de dólar, Selic e IPCA via serviço de servidor;
+- cotações individuais B3 para ações, ETFs e FIIs via `market-data`;
+- Aurora com IA pela Responses API, executada no servidor e sem chave no aplicativo;
+- autenticação Supabase, workspaces, permissões e RLS;
+- sincronização offline-first com tratamento de conflitos por versão/data;
+- SQLCipher com chave protegida por DPAPI no Windows;
+- backup consistente, backup portátil e restauração;
+- atualização automática preparada com assinatura Tauri;
+- testes Node, Rust, `cargo check`, compilação NSIS e smoke test no CI Windows.
 
-Executar:
+Executar localmente:
 
 ```powershell
 npm ci
@@ -19,32 +33,42 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib
 cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
-O GitHub Actions compila o instalador Windows e verifica que o executável permanece aberto por 15 segundos. Em PR, gera artefato de teste sem publicar release. O resultado específico do run deve ser consultado no PR; um resultado de versão anterior não valida a 1.7.
+## Homologação real que deve ser feita com o instalador
 
-## Critérios de aceite ainda pendentes
+Os itens abaixo são testes de aceite, não funcionalidades pendentes de implementação:
 
-| Critério | O que falta validar ou implementar |
+| Área | Roteiro de homologação |
 |---|---|
-| Paridade completa com a planilha | Roteiro manual com receitas, despesas, parcelas e faturas de vários meses; comparar saldos e rankings com as fórmulas originais. |
-| Interface Windows | Cadastro, edição, exclusão, ida e volta entre todas as telas, layouts e ausência de erros JavaScript no WebView2 real. |
-| Identidade e permissões | Proprietário, operador e consulta em dois ambientes, incluindo negações de acesso, convites, login offline e recuperação de senha. |
-| Sincronização | Dois dispositivos, reconexão, conflitos, exclusões e troca de ambiente durante requisições. |
-| Backup | Restaurar cópia consistente numa máquina Windows de teste e confirmar comportamento da chave DPAPI; manter cópia dos dados anteriores. |
-| Open Finance | Implementar consentimento isolado do aplicativo, configurar credenciais por canal seguro e validar paginação, campos, renovação e revogação. Nova conexão/renovação estão bloqueadas no app e na função. |
-| Dados bancários | Cache de saldos e faturas não equivale à importação/conciliação automática de transações; esta ainda não está implementada. |
-| Atualização automática | Configurar par de assinatura Tauri e testar upgrade com backup. Builds sem chaves não têm auto-update. |
-| Continuidade com o web | Site anterior e app usam persistências distintas; definir migração ou convergência antes de prometer a mesma base em ambos. |
-| IA e cotações individuais | Aurora é um mecanismo local de regras. IA generativa, regras atualizadas no servidor e preços automáticos por ativo não estão implementados. |
-| Importadores | O desktop importa CSV; os demais formatos existentes no web precisam de portabilidade e testes. |
+| Interface Windows | Abrir e percorrer Dashboard, Lançamentos, Contas & Cartões, Dashboard Analítico, Investimentos, Parametrização e Usuários & Acessos; cadastrar, editar e excluir registros. |
+| Login | Entrar com conta real, sair, entrar novamente e confirmar persistência/renovação da sessão conforme esperado. |
+| Permissões | Validar proprietário, operador e consulta, incluindo negações de criação/edição/exclusão. |
+| Sincronização | Criar lançamento offline, reconectar e confirmar o registro em outra sessão/dispositivo; depois testar edição concorrente e exclusão. |
+| Recuperação de senha | Solicitar e concluir a recuperação usando uma conta de homologação. |
+| Backup | Criar backup, alterar dados, testar chave incorreta e depois restaurar corretamente em ambiente descartável. |
+| Aurora | Validar resposta real com cenários de déficit, renda variável, reserva insuficiente, concentração de carteira, cotação antiga e dados insuficientes. |
+| Cotações | Atualizar PETR4/VALE3 ou outro ativo de teste e conferir fonte, data e preservação do preço local quando a API estiver indisponível. |
+| Atualizador | Quando as chaves Tauri forem configuradas, instalar uma versão assinada e homologar o upgrade para uma versão seguinte com backup automático. |
 
-## Credenciais e consentimento
+## Dependências externas de ativação
 
-Não enviar senhas bancárias, Client Secret, service role ou chave privada de assinatura no chat ou no repositório. Configurar apenas nos gestores de segredos dos provedores correspondentes. A autorização de uma instituição bancária é uma ação do titular e não deve ser executada automaticamente pelo desenvolvimento.
+Para Aurora e cotações, os segredos de servidor precisam estar configurados no Supabase:
 
-## Evidências de referência
+- `OPENAI_API_KEY`;
+- `AURORA_MODEL`;
+- `BRAPI_TOKEN`.
 
-- Planilha “Finança Simples — Essencial 2025”, preservada sem escrita nesta implementação; seus dados privados não são versionados neste repositório.
-- [SGS 1: dólar americano de venda](https://dadosabertos.bcb.gov.br/dataset/1-taxa-de-cambio---livre---dolar-americano-venda---diario).
-- [Limites de segurança e acesso remoto do Tauri](https://v2.tauri.app/security/capabilities/).
+Para o canal de atualização automática:
 
-Os testes de funções são isolados, com respostas simuladas; não comprovam uma conexão bancária nem login de produção. A ausência de alertas no Security Advisor também não substitui testes de autorização e revisão de aplicação.
+- `TAURI_SIGNING_PRIVATE_KEY`;
+- `TAURI_UPDATER_PUBLIC_KEY`;
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` quando aplicável.
+
+A ausência dessas chaves **não impede gerar o instalador de homologação**. Ela apenas deixa indisponível o recurso externo correspondente ou impede a publicação de atualização automática assinada.
+
+## Fora do escopo da 1.7
+
+- Open Finance / Pluggy, consentimento bancário e importação automática de transações;
+- convergência com um site legado separado, caso ele volte a ser utilizado;
+- execução automática de investimentos ou movimentações bancárias.
+
+O sistema não deve armazenar no cliente chaves privadas, service role, Client Secret bancário ou chave de IA.
