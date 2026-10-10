@@ -11,7 +11,7 @@
     monthMetrics, expenseRanking, incomeRanking, cardCategoryRanking, cardRanking,
     annualMetrics, investmentMetrics,
     saveRegularLaunch, saveCardLaunch, saveTransfer, settleTransaction, settleInvoice,
-    importInvoice,
+    prepareInvoiceImport, commitInvoiceImport,
   } = C;
 
   const $ = (id) => document.getElementById(id);
@@ -194,7 +194,7 @@
       <section class="report-toolbar panel"><label>Mês<input id="month" type="month" value="${S.month}"></label><div><button class="ghost" data-action="exportTx">Exportar CSV</button></div></section>
       ${editTransactionPanel()}
       <div class="cards-grid">${expenseLauncher()}${incomeLauncher()}${cardLauncher()}</div>
-      <div class="two-col">${transferLauncher()}<section class="panel"><div class="panel-head"><div><h3>Importar fatura CSV</h3><small>Importe uma fatura já fechada para um cartão cadastrado.</small></div></div><form id="importForm" class="form panel-body"><label>Cartão<select name="cardId" required>${cardOptions()}</select></label><label>Vencimento da fatura<input name="dueDate" type="date" required></label><label>Arquivo CSV<input name="file" type="file" accept=".csv,text/csv" required></label><button class="ghost" ${cards().length ? "" : "disabled"}>Importar fatura</button><span id="importMsg" class="form-msg"></span></form></section></div>
+      <div class="two-col">${transferLauncher()}<section class="panel"><div class="panel-head"><div><h3>Importar fatura CSV</h3><small>Importe uma fatura já fechada para um cartão cadastrado.</small></div></div><form id="importForm" class="form panel-body"><label>Cartão<select name="cardId" required>${cardOptions()}</select></label><label>Vencimento da fatura<input name="dueDate" type="date" required></label><label>Arquivo CSV<input name="file" type="file" accept=".csv,text/csv" required></label><label>Total da fatura (opcional, para conferência)<input name="totalExpected" placeholder="Ex.: 2.269,91"></label><div id="invoicePreview"></div><button type="submit" class="ghost" ${cards().length ? "" : "disabled"}>Analisar fatura CSV</button><span id="importMsg" class="form-msg"></span></form></section></div>
       <section class="panel"><div class="panel-head"><h3>Movimentos de ${esc(monthLabel(S.month))}</h3></div><div class="table-wrap"><table><thead><tr><th>Data/competência</th><th>Descrição</th><th>Beneficiário/Pagador</th><th>Categoria</th><th>Origem</th><th>Parcela</th><th>Status</th><th class="right">Valor</th><th></th></tr></thead><tbody>${rows.length ? rows.map((item) => `<tr><td>${esc(effectiveDate(item))}</td><td>${esc(item.description)}</td><td>${esc(item.counterparty || "—")}</td><td>${esc(categoryName(item))}</td><td>${esc(originLabel(item))}</td><td>${Number(item.installmentCount || 1) > 1 ? `${item.installmentNumber}/${item.installmentCount}` : "—"}</td><td>${statusLabel(item)}</td><td class="right ${isIncome(item) ? "income" : "expense"}">${isIncome(item) ? "+" : "−"}${money(item.amountCents)}</td><td class="right actions-cell">${item.status !== "paid" && !isCardPurchase(item) ? `<button class="ghost" data-action="settle" data-id="${item.id}">Baixar</button>` : ""}${!isTransfer(item) ? `<button class="ghost" data-action="edit" data-type="transactions" data-id="${item.id}">Editar</button>` : ""}<button class="danger ghost" data-action="delete" data-type="transactions" data-id="${item.id}">Excluir</button></td></tr>`).join("") : `<tr><td colspan="9" class="empty">Nenhum lançamento neste mês.</td></tr>`}</tbody></table></div></section>`;
   }
 
@@ -291,11 +291,71 @@
       }
       catch (error) { setMessage("editTxMsg", error.message || String(error), true); }
     });
-    $("importForm")?.addEventListener("submit", async (event) => {
-      event.preventDefault(); const form = event.currentTarget, values = formObject(form); setMessage("importMsg", "Importando...");
-      try { const count = await importInvoice(values.cardId, values.dueDate, form.elements.file.files[0]); await load(); setMessage("importMsg", `${count} item(ns) importado(s).`); render(); }
-      catch (error) { setMessage("importMsg", error.message || String(error), true); }
-    });
+
+    const importForm = $("importForm");
+    if (importForm) {
+      let invoiceDraft = null;
+      let hasWarnings = false;
+      const submit = importForm.querySelector('button[type="submit"]');
+      const previewBox = $("invoicePreview");
+      const resetDraft = () => {
+        invoiceDraft = null;
+        hasWarnings = false;
+        previewBox.innerHTML = "";
+        submit.textContent = "Analisar fatura CSV";
+        setMessage("importMsg", "");
+      };
+      for (const name of ["cardId", "dueDate", "file", "totalExpected"]) {
+        importForm.elements[name]?.addEventListener("change", resetDraft);
+      }
+      importForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (submit.disabled) return;
+        submit.disabled = true;
+        try {
+          if (!invoiceDraft) {
+            const values = formObject(importForm);
+            setMessage("importMsg", "Lendo e conferindo a fatura...");
+            const draft = await prepareInvoiceImport(values.cardId, values.dueDate, importForm.elements.file.files[0]);
+            const expected = String(values.totalExpected || "").trim();
+            const difference = expected ? parseMoney(expected) - draft.allTotalCents : 0;
+            const futureCount = draft.entries.filter((r) => r.future && !r.duplicate).length;
+            const refundCount = draft.entries.filter((r) => r.amountCents < 0 && !r.duplicate).length;
+            hasWarnings = Boolean(difference || futureCount || refundCount);
+            const warnings = [
+              futureCount ? `${futureCount} lançamento(s) com data futura. Confira o CSV original.` : "",
+              refundCount ? `${refundCount} crédito(s)/estorno(s), que reduzem o total da fatura.` : "",
+              difference ? `Diferença entre o valor informado e o CSV: ${money(difference)}.` : "",
+            ].filter(Boolean);
+            const options = categories().filter((c) => c.kind === "expense" && c.active !== false);
+            const optionHtml = (selected) => `<option value="">Sem categoria</option>${options.map((c) => `<option value="${esc(c.id)}" ${c.id === selected ? "selected" : ""}>${esc(c.name)}</option>`).join("")}`;
+            previewBox.innerHTML = `<div class="notice"><strong>Conferência antes da gravação</strong><span>Codificação: ${esc(draft.encoding)} · ${draft.entries.length} linha(s) · ${draft.duplicates} possível(is) duplicata(s) · ${draft.eligible} novo(s) item(ns).</span><span>Total líquido do arquivo: <strong>${money(draft.allTotalCents)}</strong>. Novos itens: <strong>${money(draft.totalCents)}</strong>.</span><span>Parcelas identificadas já pertencem a esta fatura. O sistema NÃO criará parcelas futuras a partir do CSV.</span></div>
+              ${warnings.length ? `<div class="notice warn"><strong>Avisos importantes</strong><span>${warnings.map(esc).join(" ")}</span></div>` : ""}
+              <div class="table-wrap"><table><thead><tr><th>Incluir</th><th>Data</th><th>Estabelecimento</th><th>Parcela</th><th>Categoria</th><th class="right">Valor</th></tr></thead><tbody>
+              ${draft.entries.map((r, i) => `<tr><td><input type="checkbox" data-import-row="${i}" ${r.duplicate ? "disabled" : "checked"} aria-label="Incluir lançamento ${i + 1}"></td><td>${esc(r.date)}${r.future ? " ⚠" : ""}</td><td>${esc(r.description)}${r.duplicate ? " (já cadastrado)" : ""}${r.amountCents < 0 ? " (crédito/estorno)" : ""}</td><td>${r.count > 1 ? `${r.number}/${r.count}` : "—"}</td><td><select data-import-category="${i}" ${r.duplicate ? "disabled" : ""}>${optionHtml(r.categoryId)}</select></td><td class="right">${money(r.amountCents)}</td></tr>`).join("")}</tbody></table></div>
+              ${hasWarnings ? '<label><input type="checkbox" id="acceptImportWarnings"> Conferi as datas, os créditos e o total da fatura; desejo continuar.</label>' : ""}`;
+            invoiceDraft = draft;
+            submit.textContent = "Confirmar lançamentos selecionados";
+            setMessage("importMsg", draft.eligible ? "Revise os itens e confirme para gravá-los." : "Todos os lançamentos desta fatura já parecem cadastrados.");
+          } else {
+            if (hasWarnings && !$("acceptImportWarnings")?.checked) throw new Error("Confirme a conferência dos avisos antes de gravar.");
+            const selection = [...importForm.querySelectorAll("input[data-import-row]:checked")].map((box) => {
+              const index = Number(box.dataset.importRow);
+              return { index, categoryId: importForm.querySelector(`select[data-import-category="${index}"]`)?.value || "" };
+            });
+            const saved = await commitInvoiceImport(invoiceDraft, selection);
+            await load();
+            render();
+            setMessage("importMsg", `${saved.count} lançamento(s) importado(s) no valor líquido de ${money(saved.totalCents)}. Duplicatas foram ignoradas.`);
+            return;
+          }
+        } catch (error) {
+          setMessage("importMsg", error.message || String(error), true);
+        } finally {
+          submit.disabled = false;
+        }
+      });
+    }
     $("accountForm")?.addEventListener("submit", async (event) => {
       event.preventDefault(); const values = formObject(event.currentTarget);
       await save("accounts", { name: values.name.trim(), institution: values.institution.trim(), type: values.type, openingBalanceCents: parseMoney(values.openingBalance), active: values.active !== "false" }, S.edit.accounts); S.edit.accounts = null; await load(); render();
