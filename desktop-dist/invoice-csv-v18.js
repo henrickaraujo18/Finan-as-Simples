@@ -89,8 +89,12 @@
     });
   }
   function fingerprint(row) {
-    const part = row.installmentNumber || row.number || 1, count = row.installmentCount || row.count || 1;
-    return [row.purchaseDate || row.date, norm(row.description).replace(/\s+/g, " "), Number(row.amountCents), part, count].join("|");
+    const parsed = installments(row.description);
+    const count = Number(row.installmentCount || row.count || 1);
+    const part = count > 1 ? Number(row.installmentNumber || row.number || 1) : parsed.number;
+    const total = count > 1 ? count : parsed.count;
+    const desc = norm(row.description).replace(/\s+\d{1,2}\s*\/\s*\d{1,2}\s*$/, "").replace(/\s+/g, " ");
+    return [row.purchaseDate || row.date, desc, Number(row.amountCents), part, total].join("|");
   }
   function categorize(row, categories, fallback = "") {
     const desc = norm(row.description);
