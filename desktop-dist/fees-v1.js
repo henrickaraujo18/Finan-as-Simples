@@ -220,7 +220,9 @@
         receiptBatchTotals.set(ch.id, (receiptBatchTotals.get(ch.id) || 0) + value);
         if (r.externalId) seenReceiptIds.add(r.externalId);
         const receiptId = C.uid(), transactionId = C.uid();
-        const receipt = { chargeId: ch.id, clientId: ch.clientId, date, amountCents: value, paymentMethod: norm(r.paymentMethod).includes("pix") ? "pix" : "transfer", accountId: values.accountId, transactionId, externalId: r.externalId };
+        const pm = norm(r.paymentMethod);
+        const paymentMethod = pm.includes("pix") ? "pix" : pm.includes("boleto") ? "boleto" : pm.includes("dinheiro") ? "cash" : pm.includes("debito") ? "debit_card" : pm.includes("transfer") ? "transfer" : "other";
+        const receipt = { chargeId: ch.id, clientId: ch.clientId, date, amountCents: value, paymentMethod, accountId: values.accountId, transactionId, externalId: r.externalId };
         inputs.push({ type: TYPES.receipts, id: receiptId, data: receipt }, { type: "transactions", id: transactionId, data: cashTx(receipt, ch, receiptId) });
       }
     }
