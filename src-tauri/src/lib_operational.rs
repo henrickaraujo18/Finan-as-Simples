@@ -298,6 +298,9 @@ fn validate_entity_type(entity_type: &str) -> Result<(), String> {
         "open_finance_connections",
         "open_finance_accounts",
         "open_finance_bills",
+        "fee_clients",
+        "fee_charges",
+        "fee_receipts",
         "settings",
     ];
     if allowed.contains(&entity_type) {
@@ -313,6 +316,7 @@ pub(crate) fn entity_module(entity_type: &str) -> &'static str {
         "accounts" | "cards" => "accounts",
         "investments" | "investment_goals" | "market_data" => "investments",
         "open_finance_connections" | "open_finance_accounts" | "open_finance_bills" => "openFinance",
+        "fee_clients" | "fee_charges" | "fee_receipts" => "transactions",
         "categories" | "settings" => "settings",
         _ => "settings",
     }

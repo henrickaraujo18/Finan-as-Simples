@@ -1,0 +1,17 @@
+/* Honorários — extensão visual nativa do Finança Simples 1.7 */
+.fee-tabs { display:flex;flex-wrap:wrap;gap:9px;margin:12px 0 18px; }
+.fee-tabs button.active { border:1px solid #46d6aa;background:rgba(29,143,110,.25);color:#c7ffe8;border-radius:10px;padding:11px 15px;font-weight:700; }
+.fee-filter { display:flex;align-items:center;flex-wrap:wrap;gap:20px;padding:18px; }
+.fee-filter label { display:flex;align-items:center;gap:10px; }
+.fee-message { padding:12px 16px;border:1px solid #1c8b73;border-radius:9px;margin:10px 0 16px;background:rgba(45,152,123,.08); }
+.fee-message.error { border-color:#c45858;color:#ffc5c5;background:rgba(166,39,39,.1); }
+.fee-chart { display:grid;gap:11px; }
+.fee-bar-row { display:grid;grid-template-columns:32px minmax(80px,1fr) minmax(145px,auto);align-items:center;gap:12px; }
+.fee-bar-row small { text-align:right;font-size:11px;white-space:nowrap; }
+.fee-bar-bg {position:relative;height:18px;border-radius:5px;background:rgba(171,194,189,.08);overflow:hidden;}
+.fee-bar-forecast,.fee-bar-paid { position:absolute;left:0;top:0;height:100%;border-radius:4px; }
+.fee-bar-forecast { background:rgba(161,183,175,.45); }
+.fee-bar-paid { background:#23ac81; }
+.fee-action-list { display:flex;gap:8px;flex-wrap:wrap; }
+.fee-action-list button {font-size:12px;}
+@media(max-width:750px){.fee-bar-row{grid-template-columns:28px 1fr}.fee-bar-row small{grid-column:2;text-align:left}.fee-tabs button{flex:1 1 140px}}

@@ -50,6 +50,7 @@
     return {
       dashboard: "Dashboard",
       transactions: "Lançamentos",
+      fees: "Honorários Contábeis",
       accounts: "Contas & Cartões",
       annual: "Resumo Anual",
       openfinance: "Open Finance",
@@ -247,7 +248,7 @@
     shell();
     delete $("view").dataset.advancedV17;
     delete $("view").dataset.proDashboard;
-    const pages = { dashboard, transactions: transactionsPage, accounts: accountsPage, annual: annualPage, openfinance: openFinancePage, investments: investmentsPage, settings: settingsPage };
+    const pages = { dashboard, fees: () => window.FSFees?.page() || dashboard(), transactions: transactionsPage, accounts: accountsPage, annual: annualPage, openfinance: openFinancePage, investments: investmentsPage, settings: settingsPage };
     $("view").innerHTML = (pages[S.page] || dashboard)();
     bindPage();
   }
