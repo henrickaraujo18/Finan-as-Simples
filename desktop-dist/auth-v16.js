@@ -245,6 +245,7 @@
     const pageModules = {
       dashboard: "dashboard",
       transactions: "transactions",
+      fees: "transactions",
       accounts: "accounts",
       annual: "analytics",
       openfinance: "openFinance",
