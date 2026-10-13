@@ -161,7 +161,7 @@
       competence: get(r, "competencia"),
       clientCode: get(r, "codigo cliente"),
       kind: get(r, "tipo"),
-      chargeValue: get(r, "valor devido", "valor informado"),
+      chargeValue: get(r, "valor devido") || get(r, "valor informado"),
       dueDate: get(r, "vencimento"),
       receiptDate: get(r, "data recebimento"),
       chargeExternalId: get(r, "id cobranca"),
@@ -176,6 +176,8 @@
     if (!file || file.size > 3_000_000) throw new Error("Selecione um CSV com até 3 MB.");
     const all = fileRows(await file.text(), section);
     const inputs = [];
+    const receiptBatchTotals = new Map();
+    const seenReceiptIds = new Set();
     if (section === "clients") {
       for (const r of all) {
         if (!r.name || !r.code) continue;
@@ -210,10 +212,13 @@
         if (!r.chargeExternalId || !value) continue;
         const ch = charges().find((x) => x.externalId === r.chargeExternalId);
         if (!ch) throw new Error(`Cobrança ${r.chargeExternalId} não encontrada. Importe Honorários primeiro.`);
-        if (r.externalId && receipts().some((x) => x.externalId === r.externalId)) continue;
+        if (r.externalId && (receipts().some((x) => x.externalId === r.externalId) || seenReceiptIds.has(r.externalId))) continue;
         const date = safeDate(r.receiptDate);
         if (!date) throw new Error(`Data inválida para recebimento ${r.externalId}.`);
-        if (value < 0 || value > balance(ch)) throw new Error(`Recebimento excede o saldo da cobrança ${r.chargeExternalId}.`);
+        const remaining = balance(ch) - (receiptBatchTotals.get(ch.id) || 0);
+        if (value <= 0 || value > remaining) throw new Error(`Recebimento excede o saldo da cobrança ${r.chargeExternalId}.`);
+        receiptBatchTotals.set(ch.id, (receiptBatchTotals.get(ch.id) || 0) + value);
+        if (r.externalId) seenReceiptIds.add(r.externalId);
         const receiptId = C.uid(), transactionId = C.uid();
         const receipt = { chargeId: ch.id, clientId: ch.clientId, date, amountCents: value, paymentMethod: norm(r.paymentMethod).includes("pix") ? "pix" : "transfer", accountId: values.accountId, transactionId, externalId: r.externalId };
         inputs.push({ type: TYPES.receipts, id: receiptId, data: receipt }, { type: "transactions", id: transactionId, data: cashTx(receipt, ch, receiptId) });
@@ -311,7 +316,7 @@
     if (!["feeClientForm","feeChargeForm","feeReceiptForm","feeImportForm"].includes(form?.id)) return;
     event.preventDefault(); event.stopImmediatePropagation();
     if (state.busy) return;
-    const updating = form.id === "feeClientForm" ? "edit" : "create";
+    const updating = (form.id === "feeClientForm" && state.editClientId) || (form.id === "feeChargeForm" && state.editChargeId) ? "edit" : "create";
     if (!can(updating)) { memo("Sem permissão para esta operação.", true); $("view").innerHTML = page(); return; }
     state.busy = true;
     const release = window.FSAuth?.lockWorkspace?.();
