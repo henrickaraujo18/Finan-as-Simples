@@ -4,7 +4,7 @@
 
   const TYPES = [
     "transactions", "accounts", "cards", "categories", "investments", "investment_goals",
-    "market_data", "open_finance_connections", "open_finance_accounts", "open_finance_bills", "settings",
+    "market_data", "open_finance_connections", "open_finance_accounts", "open_finance_bills", "fee_clients", "fee_charges", "fee_receipts", "settings",
   ];
   const PAYMENT_METHODS = {
     pix: "PIX",
