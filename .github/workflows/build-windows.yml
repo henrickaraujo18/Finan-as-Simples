@@ -76,6 +76,8 @@ jobs:
             "desktop-dist/cloud-config.js",
             "desktop-dist/cloud-runtime-v16.js",
             "desktop-dist/app-v17.js",
+            "desktop-dist/fees-v1.js",
+            "desktop-dist/fees-v1.css",
             "desktop-dist/finance-v17.js",
             "desktop-dist/advanced-v17.css",
             "desktop-dist/styles.css",
@@ -87,13 +89,15 @@ jobs:
             "supabase/migrations/005_workspace_self_service_and_client_sync.sql",
             "supabase/migrations/006_workspace_discovery_owner_identity.sql",
             "supabase/migrations/008_advanced_financial_entities.sql",
+            "supabase/migrations/009_accounting_fees.sql",
             "supabase/functions/invite-user/index.ts",
             "supabase/functions/manage-members/index.ts",
             "supabase/functions/reset-password/index.ts",
             "supabase/functions/market-data/index.ts",
             "supabase/functions/open-finance/index.ts",
             "tests/core-v14.test.mjs",
-            "tests/app-v17-render.test.mjs"
+            "tests/app-v17-render.test.mjs",
+            "tests/fees.test.mjs"
           )
           foreach ($path in $required) {
             if (-not (Test-Path $path)) { throw "Arquivo obrigatório não encontrado: $path" }
@@ -109,6 +113,7 @@ jobs:
           node --check desktop-dist/app-v17.js
           node --check desktop-dist/finance-v17.js
           node --check desktop-dist/aurora-v18.js
+          node --check desktop-dist/fees-v1.js
 
           $index = Get-Content "desktop-dist/index.html" -Raw
           $core = Get-Content "desktop-dist/core-v14.js" -Raw
