@@ -51,9 +51,6 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
             throw "Secret TAURI_SIGNING_PRIVATE_KEY não configurado."
           }
-          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD)) {
-            throw "Secret TAURI_SIGNING_PRIVATE_KEY_PASSWORD não configurado."
-          }
 
           if ($env:GITHUB_REF_TYPE -eq "tag") {
             if (-not $env:GITHUB_REF_NAME.StartsWith("desktop-v")) {
