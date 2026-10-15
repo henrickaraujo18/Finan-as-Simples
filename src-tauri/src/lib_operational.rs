@@ -16,7 +16,13 @@ mod cloud_runtime_v16;
 #[cfg(target_os = "windows")]
 mod security_v16;
 
-const UPDATE_ENDPOINT: &str = "https://github.com/henrickaraujo18/Finan-as-Simples/releases/download/desktop-preview/latest.json";
+const DEFAULT_UPDATE_ENDPOINT: &str = "https://github.com/henrickaraujo18/Finan-as-Simples/releases/download/desktop-preview/latest.json";
+
+fn updater_endpoint() -> &\'static str {
+    option_env!("FINANCA_SIMPLES_UPDATE_ENDPOINT")
+        .filter(|url| url.starts_with("https://"))
+        .unwrap_or(DEFAULT_UPDATE_ENDPOINT)
+}
 
 pub(crate) struct LocalDb {
     pub(crate) connection: Mutex<Connection>,
@@ -1351,9 +1357,9 @@ fn restore_portable_backup(app:tauri::AppHandle,db:State<'_,LocalDb>,auth:State<
 #[tauri::command]
 async fn check_and_install_update(app:tauri::AppHandle,db:State<'_,LocalDb>)->Result<UpdateResult,String>{
     let Some(pubkey)=updater_public_key() else {
-        return Ok(UpdateResult{configured:false,available:false,version:None,message:"atualização automática aguardando assinatura de produção".to_string()});
+        return Ok(UpdateResult{configured:false,available:false,version:None,message:"Esta instalação não contém a chave pública de atualização. Instale uma versão assinada pelo instalador oficial para habilitar o updater.".to_string()});
     };
-    let endpoint=UPDATE_ENDPOINT.parse().map_err(|error|format!("endpoint de atualização inválido: {error}"))?;
+    let endpoint=updater_endpoint().parse().map_err(|error|format!("endpoint de atualização inválido: {error}"))?;
     let updater=app.updater_builder().pubkey(pubkey).endpoints(vec![endpoint])
         .map_err(|error|format!("falha ao configurar atualizador: {error}"))?.build()
         .map_err(|error|format!("falha ao iniciar atualizador: {error}"))?;
