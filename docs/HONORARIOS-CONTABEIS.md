@@ -27,3 +27,11 @@ A rotina cria lançamentos de entrada para todos os recebimentos importados: se 
 - Permissões atuais de **Lançamentos (transactions)** também regem Honorários; nenhuma permissão adicional é concedida.
 - Teste o instalador Windows e a sincronização com base real antes de publicar o updater assinado.
 - O app não faz baixa bancária automática nem emite boletos/notas fiscais nesta versão.
+
+## Melhorias de cobrança e conciliação
+
+- Na abertura do aplicativo, após carregar os dados do ambiente, o sistema gera as mensalidades da competência atual para clientes ativos, com honorário positivo e contrato vigente (início e fim inclusivos por competência). Não gera meses históricos automaticamente; use **Gerar mensalidades** para competências anteriores.
+- A geração evita a repetição local por cliente/competência/tipo mensalidade. Em cenários de múltiplos dispositivos offline, é necessário validar conflitos após sincronização antes de assumir unicidade global.
+- Na aba **Conciliação**, selecione uma cobrança em aberto e uma receita previamente realizada no livro-caixa. A operação cria apenas o vínculo de recebimento e atualiza o lançamento existente, preservando sua identificação, conta e valor. Não cria outra entrada.
+- Só são elegíveis receitas já pagas, ainda não vinculadas e com valor integral menor ou igual ao saldo da cobrança; quando um depósito cobre várias cobranças, divida o lançamento antes de conciliar.
+- Recomendado homologar em cópia da base, particularmente com múltiplos dispositivos, antes de publicar o atualizador.
