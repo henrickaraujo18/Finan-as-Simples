@@ -178,7 +178,7 @@ jobs:
           $pkgVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
           $tauriVersion = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
           $cargoContent = Get-Content src-tauri/Cargo.toml -Raw
-          if ($pkgVersion -ne $tauriVersion -or $cargoContent -notmatch "version\\s*=\\s*\`"$([regex]::Escape($pkgVersion))\`"") {
+          if ($pkgVersion -ne $tauriVersion -or $cargoContent -notmatch ('(?m)^version\s*=\s*"' + [regex]::Escape($pkgVersion) + '"')) {
             throw "Versões divergentes: package.json=$pkgVersion, Tauri=$tauriVersion ou Cargo.toml."
           }
 
