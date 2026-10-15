@@ -71,6 +71,8 @@ pub(crate) struct CloudSyncResult {
 fn client() -> Result<Client, String> {
     Client::builder()
         .https_only(true)
+        .connect_timeout(std::time::Duration::from_secs(6))
+        .timeout(std::time::Duration::from_secs(15))
         .build()
         .map_err(|error| format!("falha ao preparar conexão segura com a nuvem: {error}"))
 }
