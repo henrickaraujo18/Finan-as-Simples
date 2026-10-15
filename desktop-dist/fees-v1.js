@@ -33,7 +33,7 @@
   const opt = (list, current = "", placeholder = "Selecione") => `<option value="">${esc(placeholder)}</option>` + list.map((x) => `<option value="${esc(x.id)}" ${x.id === current ? "selected" : ""}>${esc(x.label)}</option>`).join("");
   const clientOptions = (selected = "") => opt(clients().filter((c) => c.active !== false).map((c) => ({ id: c.id, label: `${c.code} — ${c.name}` })), selected);
   const bankOptions = (selected = "") => opt(C.accounts().filter((a) => a.active !== false).map((a) => ({ id: a.id, label: a.name })), selected, "Selecione a conta de recebimento");
-  const tabs = [["dashboard", "Dashboard"], ["clients", "Clientes"], ["charges", "Cobranças"], ["receipts", "Recebimentos"], ["import", "Importar / Exportar"]];
+  const tabs = [["dashboard", "Dashboard"], ["clients", "Clientes"], ["charges", "Cobranças"], ["receipts", "Recebimentos"], ["reconcile", "Conciliação"], ["import", "Importar / Exportar"]];
   const header = () => `<section class="hero"><div><h2>Honorários contábeis</h2><p>Carteira de clientes, cobranças recorrentes, recebimentos e inadimplência.</p></div></section>
     <div class="fee-tabs">${tabs.map(([id, label]) => `<button type="button" class="${state.tab === id ? "active" : "ghost"}" data-fee-tab="${id}">${label}</button>`).join("")}</div>${say()}`;
   function summary(month) {
@@ -73,7 +73,7 @@
     <label>Regime tributário <select name="taxRegime">${["MEI", "Simples Nacional", "Lucro Presumido", "Lucro Real", "Outro"].map((x) => `<option ${c.taxRegime === x ? "selected" : ""}>${x}</option>`).join("")}</select></label>
     <label>Honorário mensal (R$) <input required name="monthlyFee" inputmode="decimal" value="${esc(input(c.monthlyFeeCents))}"></label>
     <label>Dia do vencimento <input required name="dueDay" type="number" min="1" max="31" value="${esc(c.dueDay || 10)}"></label>
-    <label>Início do contrato <input name="startDate" type="date" value="${esc(c.startDate || "")}"></label>
+    <label>Início do contrato <input name="startDate" type="date" value="${esc(c.startDate || "")}"></label><label>Fim do contrato <input name="endDate" type="date" value="${esc(c.endDate || "")}"></label>
     <label>WhatsApp <input name="phone" value="${esc(c.phone || "")}"></label>
     <label>E-mail <input type="email" name="email" value="${esc(c.email || "")}"></label>
     <label>Status <select name="active"><option value="true">Ativo</option><option value="false" ${c.active === false ? "selected" : ""}>Inativo</option></select></label>
@@ -119,7 +119,7 @@
   }
   function page() {
     if (!can("view")) return '<section class="panel"><p>Você não tem permissão de acesso aos honorários neste ambiente.</p></section>';
-    return header() + ({ dashboard: dashboardPage, clients: clientPage, charges: chargePage, receipts: receiptPage, import: importPage }[state.tab] || dashboardPage)();
+    return header() + ({ dashboard: dashboardPage, clients: clientPage, charges: chargePage, receipts: receiptPage, reconcile: reconcilePage, import: importPage }[state.tab] || dashboardPage)();
   }
   const rowsFromCsv = (text) => {
     const result = []; let row = [], cell = "", quoted = false;
@@ -186,7 +186,7 @@
           code: r.code, name: r.name, tradeName: r.tradeName, taxId: r.taxId,
           taxRegime: r.taxRegime || "Outro", monthlyFeeCents: cents(r.monthlyFee),
           dueDay: Math.min(31, Math.max(1, Number(r.dueDay) || 10)), startDate: safeDate(r.startDate),
-          phone: r.phone, email: r.email, notes: r.notes, active: norm(r.contractStatus) !== "inativo",
+          phone: r.phone, email: r.email, notes: r.notes, endDate: "", active: norm(r.contractStatus) !== "inativo",
         } });
       }
     } else if (section === "charges") {
@@ -256,16 +256,57 @@
     await C.save(TYPES.charges, { clientId: v.clientId, competence: v.competence, kind: v.kind, amountCents: value, dueDate: v.dueDate, description: v.description || "Honorários contábeis", externalId: existing?.externalId || "" }, state.editChargeId || null);
     state.editChargeId = "";
   }
-  async function generate() {
-    const month = state.month, inputs = [];
+  async function generate(month = state.month) {
+    const inputs = [];
     for (const cl of clients()) {
-      if (cl.active === false || Number(cl.monthlyFeeCents) <= 0 || cl.startDate?.slice(0, 7) > month) continue;
+      if (cl.active === false || Number(cl.monthlyFeeCents) <= 0 || cl.startDate?.slice(0, 7) > month || (cl.endDate && cl.endDate.slice(0, 7) < month)) continue;
       if (charges().some((x) => x.clientId === cl.id && x.competence === month && x.kind === "monthly")) continue;
       inputs.push({ type: TYPES.charges, id: C.uid(), data: { clientId: cl.id, competence: month, kind: "monthly", amountCents: Number(cl.monthlyFeeCents),
         dueDate: C.buildDate(Number(month.slice(0, 4)), Number(month.slice(5)), Number(cl.dueDay || 10)), description: "Mensalidade de assessoria contábil" } });
     }
     if (inputs.length) await C.bulkSave(inputs);
     return inputs.length;
+  }
+  // Chamado após carregar o workspace; não cria mensalidades retroativas automaticamente.
+  let autoGenerationBusy = false;
+  async function autoGenerate() {
+    if (autoGenerationBusy || !can("create")) return 0;
+    autoGenerationBusy = true;
+    try {
+      const n = await generate(isoToday().slice(0, 7));
+      if (n) await C.load();
+      return n;
+    } finally { autoGenerationBusy = false; }
+  }
+  const availableTransactions = () => (C.S.data.transactions || []).filter((t) =>
+    t.kind === "income" && t.status === "paid" && Number(t.amountCents) > 0 &&
+    !t.feeReceiptId && !t.feeChargeId && !receipts().some((r) => r.transactionId === t.id)
+  );
+  async function reconcile(chargeId, transactionId) {
+    const ch = charges().find((x) => x.id === chargeId);
+    const tx = availableTransactions().find((x) => x.id === transactionId);
+    if (!ch || !tx) throw new Error("Cobrança ou receita indisponível para conciliação.");
+    if (Number(tx.amountCents) > balance(ch)) throw new Error("O lançamento excede o saldo da cobrança. Divida o lançamento antes da conciliação.");
+    if (!tx.accountId || !safeDate(tx.paidAt || tx.date)) throw new Error("A receita precisa ter conta e data de pagamento.");
+    const receiptId = C.uid();
+    const receipt = {chargeId: ch.id, clientId: ch.clientId, amountCents: Number(tx.amountCents),
+      date: safeDate(tx.paidAt || tx.date), paymentMethod: tx.paymentMethod || "other",
+      accountId: tx.accountId, transactionId: tx.id, notes: "Conciliado com lançamento existente"};
+    await C.bulkSave([
+      {type: TYPES.receipts, id: receiptId, data: receipt},
+      {type: "transactions", id: tx.id, data: {...tx, feeReceiptId: receiptId, feeChargeId: ch.id,
+        source: tx.source || "accounting_fees_reconciled"}}
+    ]);
+  }
+  function reconcilePage() {
+    const open = charges().filter((x) => balance(x) > 0);
+    const txs = availableTransactions();
+    return `<section class="panel"><div class="panel-head"><h3>Conciliar receita existente sem criar outra entrada</h3></div>
+      <form id="feeReconcileForm" class="form panel-body"><div class="form-grid">
+      <label>Cobrança em aberto <select name="chargeId" required>${opt(open.map(x=>({id:x.id,label:`${client(x.clientId)?.name || "Cliente"} • ${x.competence} • saldo ${amount(balance(x))}`})))}</select></label>
+      <label>Receita já lançada <select name="transactionId" required>${opt(txs.map(x=>({id:x.id,label:`${x.paidAt || x.date} • ${x.description || "Receita"} • ${amount(x.amountCents)} • ${C.accountName(x.accountId)}`})))}</select></label>
+      </div><p class="muted">Somente receitas realizadas e ainda não conciliadas. O lançamento original permanece no caixa; valores superiores ao saldo não são vinculados automaticamente.</p>
+      <button class="primary" ${!can("edit") ? "disabled" : ""}>Conciliar lançamento</button></form></section>`;
   }
   async function saveReceipt(form) {
     const v = Object.fromEntries(new FormData(form).entries());
@@ -315,10 +356,10 @@
   });
   document.addEventListener("submit", async (event) => {
     const form = event.target;
-    if (!["feeClientForm","feeChargeForm","feeReceiptForm","feeImportForm"].includes(form?.id)) return;
+    if (!["feeClientForm","feeChargeForm","feeReceiptForm","feeImportForm","feeReconcileForm"].includes(form?.id)) return;
     event.preventDefault(); event.stopImmediatePropagation();
     if (state.busy) return;
-    const updating = (form.id === "feeClientForm" && state.editClientId) || (form.id === "feeChargeForm" && state.editChargeId) ? "edit" : "create";
+    const updating = form.id === "feeReconcileForm" || (form.id === "feeClientForm" && state.editClientId) || (form.id === "feeChargeForm" && state.editChargeId) ? "edit" : "create";
     if (!can(updating)) { memo("Sem permissão para esta operação.", true); $("view").innerHTML = page(); return; }
     state.busy = true;
     const release = window.FSAuth?.lockWorkspace?.();
@@ -326,6 +367,7 @@
       if (form.id === "feeClientForm") await saveClient(form);
       else if (form.id === "feeChargeForm") await saveCharge(form);
       else if (form.id === "feeReceiptForm") await saveReceipt(form);
+      else if (form.id === "feeReconcileForm") { const v = Object.fromEntries(new FormData(form).entries()); await reconcile(v.chargeId, v.transactionId); }
       else {
         const n = await importSheet(form);
         memo(`${n} registro(s) importado(s).`);
@@ -335,5 +377,5 @@
     } catch (e) { memo(e.message || String(e), true); }
     finally { release?.(); state.busy = false; if (C.S.page === "fees") $("view").innerHTML = page(); }
   }, true);
-  window.FSFees = { page, summary, status, balance, parseCsv: rowsFromCsv };
+  window.FSFees = { page, summary, status, balance, parseCsv: rowsFromCsv, autoGenerate, reconcile, availableTransactions };
 })();
