@@ -82,5 +82,5 @@ test("versão está sincronizada entre pacote, Cargo, Tauri e lockfiles", () => 
   assert.equal(JSON.parse(read("package-lock.json")).version, version);
   assert.equal(JSON.parse(read("src-tauri/tauri.conf.json")).version, version);
   assert.match(read("src-tauri/Cargo.toml"), new RegExp("version = \"" + version.replaceAll(".", "\\.") + "\""));
-  assert.match(read("src-tauri/Cargo.lock"), /name = "financa-simples-desktop"\nversion = "1\.7\.1"/);
+  assert.match(read("src-tauri/Cargo.lock").replaceAll("\r\n", "\n"), /name = "financa-simples-desktop"\nversion = "1\.7\.1"/);
 });
