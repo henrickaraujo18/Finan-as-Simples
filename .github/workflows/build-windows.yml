@@ -209,7 +209,19 @@ jobs:
                      (-not [string]::IsNullOrWhiteSpace($env:FINANCA_UPDATER_PUBLIC_KEY))
 
           if ($canSign) {
-            Write-Host "Build de produção com artefatos assinados para atualização automática."
+            # O bundler Tauri v2 exige plugins.updater mesmo quando o Rust
+            # configura a chave e o endpoint dinamicamente durante a execução.
+            # Injetar a chave PÚBLICA apenas no runner, sem gravá-la no Git.
+            $signedConfig = "src-tauri/tauri.signed.conf.json"
+            $config = Get-Content $signedConfig -Raw | ConvertFrom-Json
+            $pluginConfig = @{ updater = @{
+              pubkey = $env:FINANCA_UPDATER_PUBLIC_KEY
+              endpoints = @($env:FINANCA_SIMPLES_UPDATE_ENDPOINT)
+              windows = @{ installMode = "passive" }
+            }}
+            $config | Add-Member -NotePropertyName plugins -NotePropertyValue $pluginConfig -Force
+            $config | ConvertTo-Json -Depth 12 | Set-Content $signedConfig -Encoding utf8
+            Write-Host "Configuracao Tauri updater preparada para bundle assinado."
             npm run build -- --config src-tauri/tauri.signed.conf.json --bundles nsis
             "SIGNED_UPDATE=true" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           } else {
@@ -268,7 +280,7 @@ jobs:
           Copy-Item $sourceInstaller.FullName $assetPath -Force
           git tag -f desktop-preview $env:GITHUB_SHA
           git push origin desktop-preview --force
-          $notes = "Finança Simples 1.7.1 — release candidate para homologação real: módulos financeiros da planilha Essencial 2025, carteira, metas, Aurora com IA via servidor, cotações B3, indicadores BCB, sincronização offline-first, SQLCipher e backup. Open Finance foi adiado e está fora do escopo desta versão. O canal de atualização automática só é publicado quando a assinatura Tauri estiver configurada. Consulte docs/VALIDATION-1.7.md."
+          $notes = "Finança Simples 1.7.2 — release candidate para homologação real: módulos financeiros da planilha Essencial 2025, carteira, metas, Aurora com IA via servidor, cotações B3, indicadores BCB, sincronização offline-first, SQLCipher e backup. Open Finance foi adiado e está fora do escopo desta versão. O canal de atualização automática só é publicado quando a assinatura Tauri estiver configurada. Consulte docs/VALIDATION-1.7.md."
           gh release view desktop-preview 2>$null
           if ($LASTEXITCODE -ne 0) {
             gh release create desktop-preview $assetPath --prerelease --title "Finança Simples para Windows" --notes $notes

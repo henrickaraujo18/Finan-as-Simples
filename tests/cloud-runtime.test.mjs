@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
-function harness(fetch, offline = false) {
+function harness(fetch, offline = false, overrides = {}) {
   const calls = []; const timers = [];
-  const window = { FSCore: {}, FSCloudConfig: { supabaseUrl: 'https://test.invalid', supabasePublishableKey: 'public' }, __TAURI__: { core: { invoke: async (command, args) => { calls.push(command); return { authenticated: command !== 'auth_logout', workspaces: [] }; } } }, addEventListener() {} };
+  const window = { FSCore: {}, FSCloudConfig: { supabaseUrl: 'https://test.invalid', supabasePublishableKey: 'public' }, __TAURI__: { core: { invoke: async (command, args) => { calls.push(command); if (command === 'cloud_sync' && overrides.stalledSync) return new Promise(() => {}); if (command === 'cloud_reconcile_login' && overrides.cloud503) throw new Error('falha ao consultar ambientes cloud (503 Service Unavailable)'); return { authenticated: command !== 'auth_logout', workspaces: [] }; } } }, addEventListener() {} };
   vm.runInNewContext(readFileSync(new URL('../desktop-dist/cloud-runtime-v16.js', import.meta.url), 'utf8'), {
     window, navigator: { onLine: !offline }, document: { documentElement: {}, getElementById: () => null, querySelector: () => null, addEventListener() {} },
     MutationObserver: class { observe() {} }, setTimeout: fn => timers.push(fn), clearTimeout() {}, setInterval() {}, fetch, console,
@@ -27,4 +27,29 @@ test('login online reconcilia e sincroniza; alteração local agenda nova sincro
   assert.deepEqual(h.calls, ['auth_login', 'cloud_reconcile_login', 'cloud_sync']);
   await h.invoke('upsert_entity', {}); assert.equal(h.timers.length, 1);
   await h.invoke('auth_logout'); assert.equal(h.runtime.isAuthenticated(), false);
+});
+
+test('login não depende do retorno da sincronização na nuvem', async () => {
+  const h = harness(async () => Response.json({ access_token: 'fake', refresh_token: 'fake', expires_in: 3600 }), false, { stalledSync: true });
+  const result = await Promise.race([
+    h.invoke('auth_login', { email: 'test@example.invalid', password: 'not-real' }),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('Login bloqueado aguardando cloud_sync')), 250)),
+  ]);
+  assert.equal(result.authenticated, true);
+  assert.ok(h.calls.includes('cloud_sync'));
+});
+
+test('rede indisponível durante autenticação permite senha local válida', async () => {
+  const h = harness(async () => { throw new TypeError('fetch failed'); });
+  const result = await h.invoke('auth_login', { email: 'test@example.invalid', password: 'not-real' });
+  assert.equal(result.authenticated, true);
+  assert.deepEqual(h.calls, ['auth_login']);
+});
+
+test('erro 503 ao reconciliar nuvem não bloqueia senha local já validada', async () => {
+  const h = harness(async () => Response.json({ access_token: 'fake', refresh_token: 'fake', expires_in: 3600 }), false, { cloud503: true });
+  const result = await h.invoke('auth_login', { email: 'test@example.invalid', password: 'not-real' });
+  assert.equal(result.authenticated, true);
+  assert.ok(h.calls.includes('cloud_reconcile_login'));
+  assert.equal(h.calls.filter(x => x === 'auth_login').length, 2);
 });
