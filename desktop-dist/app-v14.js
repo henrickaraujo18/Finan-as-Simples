@@ -355,6 +355,7 @@
     try {
       S.runtime = await invoke("runtime_status");
       await load();
+      try { await window.FSFees?.autoGenerate?.(); } catch (error) { console.warn("Honorários: geração automática não concluída", error); }
       render();
     } catch (error) {
       $("view").innerHTML = `<section class="fatal"><h2>Não foi possível iniciar o Finança Simples</h2><p>${esc(error.message || error)}</p></section>`;
