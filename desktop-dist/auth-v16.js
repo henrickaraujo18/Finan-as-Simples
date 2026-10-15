@@ -9,6 +9,8 @@
     gateShown: false,
     updateChecked: false,
     updateTimer: null,
+    updateDisabled: false,
+    updateStatus: "",
     editingMemberId: null,
     switching: false,
     workspaceLocks: 0,
@@ -235,7 +237,7 @@
     if (foot && !$("updateState")) {
       const update = document.createElement("small");
       update.id = "updateState";
-      update.textContent = navigator.onLine ? "Atualizações: verificando..." : "Atualizações: aguardando internet";
+      update.textContent = auth.updateStatus || (navigator.onLine ? "Atualizações: verificação agendada" : "Atualizações: aguardando internet");
       foot.appendChild(update);
     }
   }
@@ -524,31 +526,56 @@
     }
   }
 
+  function setUpdaterStatus(message) {
+    auth.updateStatus = message;
+    const label = $("updateState");
+    if (label) label.textContent = message;
+  }
+
   async function checkAutomaticUpdate() {
-    if (auth.updateChecked || !navigator.onLine) return;
+    if (auth.updateChecked || auth.updateDisabled) return;
+    if (!navigator.onLine) {
+      setUpdaterStatus("Atualizações: aguardando internet");
+      return;
+    }
+
     auth.updateChecked = true;
-    const state = $("updateState");
-    if (state) state.textContent = "Atualizações: verificando...";
+    setUpdaterStatus("Atualizações: verificando nova versão...");
+    let nextCheckMs = 6 * 60 * 60 * 1000;
     try {
       const result = await rawInvoke("check_and_install_update");
-      if (state) state.textContent = result.configured
-        ? (result.available ? `Atualizando para ${result.version}...` : "Atualizações: em dia")
-        : "Atualizações automáticas: aguardando assinatura";
+      if (!result.configured) {
+        auth.updateDisabled = true;
+        setUpdaterStatus("Atualizador não habilitado nesta instalação: falta assinatura. Instale uma versão assinada manualmente.");
+      } else if (result.available) {
+        setUpdaterStatus(`Atualizações: instalando versão ${result.version || "disponível"}...`);
+      } else {
+        setUpdaterStatus("Atualizações: nenhuma versão mais recente disponível");
+      }
     } catch (error) {
-      if (state) state.textContent = "Atualizações: falha na verificação; nova tentativa em 15 minutos";
-      scheduleUpdater(15 * 60 * 1000);
-      return;
+      // Não esconda 404 do manifesto ou falhas de rede como uma mensagem genérica.
+      const detail = String(error?.message || error || "erro desconhecido").slice(0, 200);
+      setUpdaterStatus(`Atualizações: falha na verificação (${detail}). Nova tentativa em 15 min.`);
+      nextCheckMs = 15 * 60 * 1000;
     } finally {
       auth.updateChecked = false;
+      if (!auth.updateDisabled) scheduleUpdater(nextCheckMs);
     }
-    scheduleUpdater(6 * 60 * 60 * 1000);
   }
 
   function scheduleUpdater(delay = 20000) {
-    if (auth.updateTimer != null) clearTimeout(auth.updateTimer);
+    if (auth.updateTimer != null) {
+      clearTimeout(auth.updateTimer);
+      auth.updateTimer = null;
+    }
+    if (auth.updateChecked || auth.updateDisabled) return;
+    if (!navigator.onLine) {
+      setUpdaterStatus("Atualizações: aguardando internet");
+      return;
+    }
     auth.updateTimer = setTimeout(() => {
       auth.updateTimer = null;
-      checkAutomaticUpdate();
+      void checkAutomaticUpdate();
     }, delay);
   }
 
@@ -558,7 +585,7 @@
     setTimeout(() => {
       installChrome();
       applyPermissions();
-      if (auth.updateTimer == null && !auth.updateChecked) scheduleUpdater();
+      if (auth.updateTimer == null && !auth.updateChecked && !auth.updateDisabled) scheduleUpdater();
     }, 0);
     return result;
   };
@@ -614,6 +641,15 @@
   observer.observe(document.body, { childList: true, subtree: true });
 
   window.addEventListener("online", () => {
-    if (!auth.updateChecked) scheduleUpdater();
+    // A reconexão não depende do login no Supabase nem da troca de workspace.
+    if (!auth.updateChecked && !auth.updateDisabled) scheduleUpdater(1000);
   });
+  window.addEventListener("offline", () => {
+    if (auth.updateTimer != null) clearTimeout(auth.updateTimer);
+    auth.updateTimer = null;
+    setUpdaterStatus("Atualizações: aguardando internet");
+  });
+
+  // Iniciar mesmo quando a tela de login estiver aberta.
+  scheduleUpdater();
 })();
