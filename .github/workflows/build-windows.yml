@@ -209,6 +209,22 @@ jobs:
                      (-not [string]::IsNullOrWhiteSpace($env:FINANCA_UPDATER_PUBLIC_KEY))
 
           if ($canSign) {
+            # GitHub CLI/Windows PowerShell podem inserir BOM (EF BB BF) no valor
+            # da chave quando um arquivo UTF-8 e cadastrado no Actions Secrets.
+            # Normalizar no runner sem imprimir ou persistir a chave privada.
+            $privateKey = $env:TAURI_SIGNING_PRIVATE_KEY.Trim()
+            $privateKey = $privateKey.TrimStart([char]0xFEFF, [char]0xEF, [char]0xBB, [char]0xBF).Trim()
+            try {
+              $decodedKey = [Convert]::FromBase64String($privateKey)
+              if ($decodedKey.Length -lt 32) { throw "Chave curta demais." }
+              [Array]::Clear($decodedKey, 0, $decodedKey.Length)
+            } catch {
+              throw "TAURI_SIGNING_PRIVATE_KEY: formato base64 invalido mesmo apos remover BOM. Recadastre a chave existente sem BOM; nao gere outra chave."
+            }
+            $env:TAURI_SIGNING_PRIVATE_KEY = $privateKey
+            $env:FINANCA_UPDATER_PUBLIC_KEY = $env:FINANCA_UPDATER_PUBLIC_KEY.Trim().TrimStart([char]0xFEFF, [char]0xEF, [char]0xBB, [char]0xBF).Trim()
+            Write-Host "Chave privada validada sem exibir material criptografico."
+
             # O bundler Tauri v2 exige plugins.updater mesmo quando o Rust
             # configura a chave e o endpoint dinamicamente durante a execução.
             # Injetar a chave PÚBLICA apenas no runner, sem gravá-la no Git.
