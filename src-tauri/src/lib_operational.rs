@@ -18,7 +18,7 @@ mod security_v16;
 
 const DEFAULT_UPDATE_ENDPOINT: &str = "https://github.com/henrickaraujo18/Finan-as-Simples/releases/download/desktop-preview/latest.json";
 
-fn updater_endpoint() -> &\'static str {
+fn updater_endpoint() -> &'static str {
     option_env!("FINANCA_SIMPLES_UPDATE_ENDPOINT")
         .filter(|url| url.starts_with("https://"))
         .unwrap_or(DEFAULT_UPDATE_ENDPOINT)
