@@ -34,6 +34,7 @@ concurrency:
 
 env:
   FINANCA_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+  FINANCA_SIMPLES_UPDATE_ENDPOINT: https://github.com/${{ github.repository }}/releases/download/desktop-preview/latest.json
   TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
   TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
@@ -171,6 +172,26 @@ jobs:
 
           Write-Host "Verificações estáticas concluídas. Autenticação e sincronização estão prontas para homologação real; Open Finance está fora do escopo desta versão."
 
+      - name: Garantir versão consistente do aplicativo
+        shell: pwsh
+        run: |
+          $pkgVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $tauriVersion = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $cargoContent = Get-Content src-tauri/Cargo.toml -Raw
+          if ($pkgVersion -ne $tauriVersion -or $cargoContent -notmatch ('(?m)^version\s*=\s*"' + [regex]::Escape($pkgVersion) + '"')) {
+            throw "Versões divergentes: package.json=$pkgVersion, Tauri=$tauriVersion ou Cargo.toml."
+          }
+
+      - name: Exigir assinatura de atualização na publicação principal
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY) -or
+              [string]::IsNullOrWhiteSpace($env:FINANCA_UPDATER_PUBLIC_KEY)) {
+            throw "PUBLICAÇÃO BLOQUEADA: configure TAURI_SIGNING_PRIVATE_KEY e TAURI_UPDATER_PUBLIC_KEY nos GitHub Actions Secrets. Instalação sem chave pública nunca poderá se atualizar automaticamente."
+          }
+          Write-Host "Chaves de assinatura disponíveis: build de atualização permitido."
+
       - name: Testar cálculos financeiros do frontend
         run: npm run test:financial
 
@@ -247,7 +268,7 @@ jobs:
           Copy-Item $sourceInstaller.FullName $assetPath -Force
           git tag -f desktop-preview $env:GITHUB_SHA
           git push origin desktop-preview --force
-          $notes = "Finança Simples 1.7 — release candidate para homologação real: módulos financeiros da planilha Essencial 2025, carteira, metas, Aurora com IA via servidor, cotações B3, indicadores BCB, sincronização offline-first, SQLCipher e backup. Open Finance foi adiado e está fora do escopo desta versão. O canal de atualização automática só é publicado quando a assinatura Tauri estiver configurada. Consulte docs/VALIDATION-1.7.md."
+          $notes = "Finança Simples 1.7.1 — release candidate para homologação real: módulos financeiros da planilha Essencial 2025, carteira, metas, Aurora com IA via servidor, cotações B3, indicadores BCB, sincronização offline-first, SQLCipher e backup. Open Finance foi adiado e está fora do escopo desta versão. O canal de atualização automática só é publicado quando a assinatura Tauri estiver configurada. Consulte docs/VALIDATION-1.7.md."
           gh release view desktop-preview 2>$null
           if ($LASTEXITCODE -ne 0) {
             gh release create desktop-preview $assetPath --prerelease --title "Finança Simples para Windows" --notes $notes
