@@ -31,6 +31,26 @@
       this.code = code;
     }
   }
+  
+  // Evita que o login permaneça eternamente em "Validando acesso..." se a rede
+  // disser que está online, mas o servidor não responder (DNS, proxy ou suspensão).
+  async function fetchWithTimeout(resource, options = {}, timeoutMs = 12000) {
+    if (typeof AbortController === "undefined") return fetch(resource, options);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(resource, { ...options, signal: controller.signal });
+    } catch (error) {
+      if (controller.signal.aborted) {
+        throw new CloudError("A nuvem demorou a responder. Confira a conexão ou entre no modo local.", 0, "network_timeout");
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+
 
   function cloudOnline() {
     return navigator.onLine !== false;
@@ -59,7 +79,7 @@
   }
 
   async function signIn(email, password) {
-    const response = await fetch(`${authBase}/token?grant_type=password`, {
+    const response = await fetchWithTimeout(`${authBase}/token?grant_type=password`, {
       method: "POST",
       headers: apiHeaders(),
       body: JSON.stringify({ email: String(email || "").trim().toLowerCase(), password }),
@@ -70,7 +90,7 @@
   }
 
   async function signUp(email, password) {
-    const response = await fetch(`${authBase}/signup`, {
+    const response = await fetchWithTimeout(`${authBase}/signup`, {
       method: "POST",
       headers: apiHeaders(),
       body: JSON.stringify({ email: String(email || "").trim().toLowerCase(), password }),
@@ -83,7 +103,7 @@
   async function refreshSession() {
     const generation = state.generation;
     if (!state.refreshToken) throw new CloudError("Sessão online expirada. Entre novamente.", 401, "session_expired");
-    const response = await fetch(`${authBase}/token?grant_type=refresh_token`, {
+    const response = await fetchWithTimeout(`${authBase}/token?grant_type=refresh_token`, {
       method: "POST",
       headers: apiHeaders(),
       body: JSON.stringify({ refresh_token: state.refreshToken }),
@@ -105,7 +125,10 @@
   }
 
   function networkFailure(error) {
-    return error instanceof TypeError || (error instanceof CloudError && (error.status === 0 || error.status >= 500));
+    const message = String(error?.message || error || "").toLowerCase();
+    return error instanceof TypeError
+      || (error instanceof CloudError && (error.status === 0 || error.status >= 500))
+      || /timed? out|timeout|connection reset|connection refused|error sending request|connection closed|dns error|falha de conex[aã]o|erro de conex[aã]o/.test(message);
   }
 
   async function reconcile(password) {
@@ -159,7 +182,7 @@
 
   async function fetchCloudWorkspaces() {
     const accessToken = await token();
-    const response = await fetch(`${cfg.supabaseUrl}/rest/v1/rpc/fs_my_workspaces`, {
+    const response = await fetchWithTimeout(`${cfg.supabaseUrl}/rest/v1/rpc/fs_my_workspaces`, {
       method: "POST",
       headers: { ...apiHeaders(), Authorization: `Bearer ${accessToken}` },
       body: "{}",
@@ -171,7 +194,7 @@
     const workspaces = await fetchCloudWorkspaces();
     if (!Array.isArray(workspaces) || workspaces.length === 0) return null;
     const reconciled = await reconcile(password);
-    await syncNow().catch(() => {});
+    void syncNow().catch(() => {});
     return reconciled;
   }
 
@@ -188,7 +211,7 @@
       const local = await nativeInvoke("auth_setup_owner", { email, password, workspaceName });
       await ensureAllCloudWorkspaces(local);
       const reconciled = await reconcile(password);
-      await syncNow().catch(() => {});
+      void syncNow().catch(() => {});
       return reconciled;
     } catch (error) {
       if (error instanceof CloudError && [400, 401].includes(error.status)) {
@@ -205,7 +228,7 @@
         const local = await nativeInvoke("auth_setup_owner", { email, password, workspaceName });
         await ensureAllCloudWorkspaces(local);
         const reconciled = await reconcile(password);
-        await syncNow().catch(() => {});
+        void syncNow().catch(() => {});
         return reconciled;
       }
       if (networkFailure(error)) {
@@ -224,7 +247,7 @@
         if ((localStatus?.workspaces || []).length) await ensureAllCloudWorkspaces(localStatus);
       } catch (_) {}
       const reconciled = await reconcile(args?.password);
-      await syncNow().catch(() => {});
+      void syncNow().catch(() => {});
       return reconciled;
     } catch (error) {
       if (networkFailure(error)) return nativeInvoke("auth_login", args);
@@ -245,7 +268,7 @@
         }
         await ensureAllCloudWorkspaces(localStatus);
         const reconciled = await reconcile(args?.password);
-        await syncNow().catch(() => {});
+        void syncNow().catch(() => {});
         return reconciled;
       }
       clearCloudSession();
@@ -262,7 +285,7 @@
       ? `${authBase}/recover?redirect_to=${encodeURIComponent(redirectTo)}`
       : `${authBase}/recover`;
     try {
-      const response = await fetch(endpoint, {
+      const response = await fetchWithTimeout(endpoint, {
         method: "POST",
         headers: apiHeaders(),
         body: JSON.stringify({ email: String(email || "").trim().toLowerCase() }),
@@ -277,7 +300,7 @@
 
   async function edge(slug, body) {
     const accessToken = await token();
-    const response = await fetch(`${functionBase}/${slug}`, {
+    const response = await fetchWithTimeout(`${functionBase}/${slug}`, {
       method: "POST",
       headers: { ...apiHeaders(), Authorization: `Bearer ${accessToken}` },
       body: JSON.stringify(body),
@@ -330,7 +353,7 @@
     const currentEmail = document.querySelector(".identity-user strong")?.textContent || "";
     await signIn(currentEmail, args.currentPassword);
     const accessToken = await token();
-    const response = await fetch(`${authBase}/user`, {
+    const response = await fetchWithTimeout(`${authBase}/user`, {
       method: "PUT",
       headers: { ...apiHeaders(), Authorization: `Bearer ${accessToken}` },
       body: JSON.stringify({ password: args.newPassword }),
