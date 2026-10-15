@@ -128,7 +128,7 @@
     const message = String(error?.message || error || "").toLowerCase();
     return error instanceof TypeError || error?.name === "TypeError"
       || (error instanceof CloudError && (error.status === 0 || error.status >= 500))
-      || /timed? out|timeout|connection reset|connection refused|error sending request|connection closed|dns error|falha de conex[aã]o|erro de conex[aã]o/.test(message);
+      || /timed? out|timeout|connection reset|connection refused|error sending request|connection closed|dns error|\b50[0-4]\b|internal server error|service unavailable|gateway timeout|falha de conex[aã]o|erro de conex[aã]o/.test(message);
   }
 
   async function reconcile(password) {
