@@ -518,67 +518,50 @@
     await bulkSave(updates);
   }
 
-  function parseCsv(text) {
-    const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/).filter((line) => line.trim());
-    if (lines.length < 2) return [];
-    const delimiter = (lines[0].match(/;/g) || []).length >= (lines[0].match(/,/g) || []).length ? ";" : ",";
-    const parseLine = (line) => {
-      const cells = [];
-      let value = "", quoted = false;
-      for (let i = 0; i < line.length; i++) {
-        const ch = line[i];
-        if (ch === '"') {
-          if (quoted && line[i + 1] === '"') { value += '"'; i++; }
-          else quoted = !quoted;
-        } else if (ch === delimiter && !quoted) { cells.push(value.trim()); value = ""; }
-        else value += ch;
-      }
-      cells.push(value.trim());
-      return cells;
-    };
-    const headers = parseLine(lines[0]).map((h) => h.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, ""));
-    const index = (names) => headers.findIndex((header) => names.some((name) => header.includes(name)));
-    const dateIndex = index(["data", "date"]), descriptionIndex = index(["descricao", "historico", "estabelecimento", "description"]), valueIndex = index(["valor", "amount"]);
-    if (descriptionIndex < 0 || valueIndex < 0) throw new Error("CSV sem colunas reconhecíveis de descrição e valor.");
-    return lines.slice(1).map(parseLine).map((cells) => ({
-      date: dateIndex >= 0 ? normalizeImportedDate(cells[dateIndex]) : today(),
-      description: cells[descriptionIndex] || "Compra importada",
-      amountCents: Math.abs(parseMoney(cells[valueIndex])),
-    })).filter((item) => item.amountCents > 0);
-  }
-  function normalizeImportedDate(value) {
-    const text = String(value || "").trim();
-    if (/^\d{4}-\d{2}-\d{2}/.test(text)) return text.slice(0, 10);
-    const br = text.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})$/);
-    if (br) return `${br[3].length === 2 ? `20${br[3]}` : br[3]}-${String(br[2]).padStart(2, "0")}-${String(br[1]).padStart(2, "0")}`;
-    return today();
-  }
-  async function importInvoice(cardId, dueDate, file) {
+
+  async function prepareInvoiceImport(cardId, dueDate, file) {
     const card = cardById(cardId);
-    if (!card) throw new Error("Selecione o cartão da fatura.");
+    if (!card) throw new Error("Selecione um cartão cadastrado.");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dueDate || "")) || Number.isNaN(Date.parse(dueDate))) throw new Error("Informe um vencimento válido.");
     if (!file) throw new Error("Selecione um arquivo CSV.");
-    const items = parseCsv(await file.text());
-    if (!items.length) throw new Error("Nenhum lançamento válido encontrado.");
-    await bulkSave(items.map((item) => ({ type: "transactions", data: {
-      kind: "expense",
-      description: item.description,
-      counterparty: item.description,
-      categoryId: card.areaCategoryId || "",
-      paymentMethod: "credit_card",
-      accountId: "",
-      cardId: card.id,
-      amountCents: item.amountCents,
-      date: item.date,
-      purchaseDate: item.date,
-      dueDate,
-      invoiceMonth: monthOf(dueDate),
-      status: "pending",
-      installmentGroupId: "",
-      installmentNumber: 1,
-      installmentCount: 1,
-      source: "invoice_import",
-    } })));
-    return items.length;
+    if (file.size > 5 * 1024 * 1024) throw new Error("O CSV ultrapassa o limite de 5 MB.");
+    if (!window.FSInvoiceCSV) throw new Error("O módulo de importação CSV não foi carregado.");
+    const data = window.FSInvoiceCSV.decode(await file.arrayBuffer());
+    const parsed = window.FSInvoiceCSV.parse(data.text);
+    const preview = window.FSInvoiceCSV.prepare(parsed, tx(), card.id, monthOf(dueDate), categories(), card.areaCategoryId || "", today());
+    return { ...preview, encoding: data.encoding, cardId: card.id, dueDate, fileName: file.name };
+  }
+
+  async function commitInvoiceImport(preview, selection) {
+    if (!preview || !Array.isArray(preview.entries) || !Array.isArray(selection)) throw new Error("Analise a fatura antes de confirmar.");
+    if (!cardById(preview.cardId)) throw new Error("O cartão selecionado não está mais disponível.");
+    if (!selection.length) throw new Error("Selecione ao menos um lançamento não duplicado.");
+    if (new Set(selection.map((r) => r.index)).size !== selection.length) throw new Error("Seleção repetida de lançamentos.");
+    // Releia os dados persistidos para não importar lançamentos adicionados após a prévia.
+    await load();
+    if (tx().some((r) => r.kind === "card_payment" && r.cardId === preview.cardId && r.invoiceMonth === monthOf(preview.dueDate) && r.status === "paid")) {
+      throw new Error("Esta fatura já possui pagamento registrado. Faça a conciliação antes de importar novas compras.");
+    }
+    const card = cardById(preview.cardId);
+    const latest = window.FSInvoiceCSV.prepare(preview.entries, tx(), preview.cardId, monthOf(preview.dueDate), categories(), card.areaCategoryId || "", today());
+    const allowed = new Set(categories().filter((c) => c.kind === "expense" && c.active !== false).map((c) => c.id));
+    const requests = selection.map(({ index, categoryId }) => {
+      const original = preview.entries[index], item = latest.entries[index];
+      if (!original || !item || original.duplicate || item.duplicate) throw new Error("Existe lançamento repetido ou a base mudou. Analise a fatura novamente.");
+      if (categoryId && !allowed.has(categoryId)) throw new Error("Uma categoria selecionada não está disponível.");
+      return { type: "transactions", data: {
+        kind: "expense", description: original.description, counterparty: original.description,
+        categoryId: categoryId || "", paymentMethod: "credit_card", accountId: "",
+        cardId: preview.cardId, amountCents: original.amountCents,
+        date: original.date, purchaseDate: original.date, dueDate: preview.dueDate,
+        invoiceMonth: monthOf(preview.dueDate), status: "pending",
+        installmentGroupId: "", installmentNumber: original.number, installmentCount: original.count,
+        source: "invoice_import",
+        notes: original.amountCents < 0 ? "Crédito/estorno importado de fatura CSV." : "Parcela já presente na fatura; não criar parcelas futuras.",
+      } };
+    });
+    await bulkSave(requests);
+    return { count: requests.length, totalCents: requests.reduce((sum, r) => sum + r.data.amountCents, 0) };
   }
 
   window.FSCore = {
@@ -596,6 +579,6 @@
     monthMetrics, expenseRanking, incomeRanking, cardCategoryRanking, cardRanking,
     annualMetrics, monthlySeries, investmentMetrics,
     saveRegularLaunch, saveCardLaunch, saveTransfer, settleTransaction, settleInvoice,
-    importInvoice,
+    prepareInvoiceImport, commitInvoiceImport,
   };
 })();
