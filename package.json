@@ -1,6 +1,6 @@
 {
   "name": "financa-simples-desktop",
-  "version": "1.7.2",
+  "version": "1.7.3",
   "description": "Finança Simples — aplicativo desktop offline-first para gestão financeira pessoal e de clientes.",
   "private": true,
   "scripts": {
