@@ -73,6 +73,16 @@ jobs:
       - name: Inicializar projeto Android Tauri
         run: npm run tauri android init -- --ci
 
+      - name: Corrigir ferramentas de linkagem do OpenSSL no NDK
+        shell: bash
+        run: |
+          TOOLCHAIN="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          test -x "$TOOLCHAIN/llvm-ranlib"
+          # OpenSSL procura o nome legado do ranlib Android, removido em NDKs recentes.
+          ln -sf llvm-ranlib "$TOOLCHAIN/aarch64-linux-android-ranlib"
+          echo "$TOOLCHAIN" >> "$GITHUB_PATH"
+          "$TOOLCHAIN/aarch64-linux-android-ranlib" --version
+
       - name: Compilar APK de release
         run: npm run tauri android build -- --apk --target aarch64
 
