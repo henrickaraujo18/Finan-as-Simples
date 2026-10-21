@@ -70,6 +70,9 @@ jobs:
           test -f src-tauri/src/cloud_runtime_v16.rs
           node --check desktop-dist/cloud-runtime-v16.js || node --check desktop-dist/cloud-runtime-v16.js
 
+      - name: Regenerar ícones oficiais do aplicativo
+        run: npm run tauri icon src-tauri/icons/icon.png -- --output src-tauri/icons
+
       - name: Inicializar projeto Android Tauri
         run: npm run tauri android init -- --ci
 
