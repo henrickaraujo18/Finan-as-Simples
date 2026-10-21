@@ -75,8 +75,6 @@ jobs:
         run: npm run tauri android init -- --ci
 
       - name: Compilar APK de release
-        env:
-          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
         run: npm run tauri android build -- --apk --target aarch64
 
       - name: Publicar APK para instalação e teste
