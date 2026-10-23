@@ -86,13 +86,15 @@ jobs:
           echo "$TOOLCHAIN" >> "$GITHUB_PATH"
           "$TOOLCHAIN/aarch64-linux-android-ranlib" --version
 
-      - name: Compilar APK de release
-        run: npm run tauri android build -- --apk --target aarch64
+      - name: Compilar APK debug assinado para teste
+        # A variante debug é assinada automaticamente pelo Gradle com a chave de depuração.
+        # Isso permite instalar o APK para validação sem exigir uma chave privada de release.
+        run: npm run tauri android build -- --apk --target aarch64 --debug
 
-      - name: Publicar APK para instalação e teste
+      - name: Publicar APK debug para instalação e teste
         uses: actions/upload-artifact@v4
         with:
-          name: Financa-Simples-Android-APK
+          name: Financa-Simples-Android-APK-DEBUG
           path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
           if-no-files-found: error
           retention-days: 14
