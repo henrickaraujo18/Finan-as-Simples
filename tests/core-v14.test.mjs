@@ -158,3 +158,54 @@ test("usuário de consulta não tenta criar cadastros padrão ao carregar", asyn
   await C.load();
   assert.equal(calls.some((call) => call.command === "upsert_entities"), false);
 });
+
+test("pagamento de fatura debita apenas a conta vinculada na data de pagamento, sem mover a competência", async () => {
+  const { C, calls } = engine();
+  C.S.data.accounts = [{ id: "bank", name: "Conta", openingBalanceCents: 100_000 }];
+  C.S.data.cards = [{ id: "card", name: "Cartão", accountId: "bank", dueDay: 10 }];
+  C.S.data.transactions = [
+    { id: "purchase", kind: "expense", paymentMethod: "credit_card", cardId: "card", amountCents: 25_000, date: "2026-08-20", dueDate: "2026-09-10", invoiceMonth: "2026-11", status: "pending" },
+  ];
+  assert.equal(C.invoiceGroups()[0].invoiceMonth, "2026-09");
+  assert.equal(C.monthMetrics("2026-11").invoiceGroupsMonth.length, 0);
+  await C.settleInvoice("card", "2026-09", "", "2026-11-07");
+  const batch = calls.find((call) => call.command === "upsert_entities").args.inputs;
+  const payment = batch.find((item) => item.data.kind === "card_payment");
+  assert.equal(payment.data.accountId, "bank");
+  assert.equal(payment.data.date, "2026-11-07");
+  assert.equal(payment.data.invoiceMonth, "2026-09");
+  // A persistência grava as duas operações de maneira conjunta no backend.
+  C.S.data.transactions = batch.map((item, i) => ({ id: item.id || "payment-" + i, ...item.data }));
+  assert.equal(C.accountBalance("bank"), 75_000);
+  assert.equal(C.monthMetrics("2026-11").expensePaid, 25_000);
+  assert.equal(C.monthMetrics("2026-11").invoiceGroupsMonth.length, 0);
+});
+
+test("baixa sem conta válida é bloqueada antes de marcar parcelas pagas", async () => {
+  const { C, calls } = engine();
+  C.S.data.cards = [{ id: "card", name: "Cartão", dueDay: 10, accountId: "" }];
+  C.S.data.transactions = [{ id: "purchase", kind: "expense", paymentMethod: "credit_card", cardId: "card", amountCents: 8000, dueDate: "2026-09-10", status: "pending" }];
+  await assert.rejects(() => C.settleInvoice("card", "2026-09"), /conta bancária válida/);
+  assert.equal(calls.some((call) => call.command === "upsert_entities"), false);
+});
+
+test("baixa duplicada é impedida mesmo quando a fatura possui compra pendente inconsistente", async () => {
+  const { C, calls } = engine();
+  C.S.data.accounts = [{ id: "bank", openingBalanceCents: 100_000 }];
+  C.S.data.cards = [{ id: "card", name: "Cartão", accountId: "bank", dueDay: 10 }];
+  C.S.data.transactions = [
+    { id: "purchase", kind: "expense", paymentMethod: "credit_card", cardId: "card", amountCents: 8000, dueDate: "2026-09-10", status: "pending" },
+    { id: "payment", kind: "card_payment", cardId: "card", invoiceMonth: "2026-09", amountCents: 8000, status: "paid", accountId: "bank" },
+  ];
+  await assert.rejects(() => C.settleInvoice("card", "2026-09"), /Já existe pagamento/);
+  assert.equal(calls.some((call) => call.command === "upsert_entities"), false);
+});
+
+test("pagamento legado sem conta explícita reflete na conta vinculada sem duplicar no saldo geral", () => {
+  const { C } = engine();
+  C.S.data.accounts = [{ id: "bank", openingBalanceCents: 100_000 }];
+  C.S.data.cards = [{ id: "card", accountId: "bank" }];
+  C.S.data.transactions = [{ id: "old", kind: "card_payment", cardId: "card", amountCents: 15_000, status: "paid", date: "2026-09-10" }];
+  assert.equal(C.accountBalance("bank"), 85_000);
+  assert.equal(C.totalCashBalance(), 85_000);
+});
