@@ -339,9 +339,14 @@
       else if (action === "payInvoice") {
         const paymentDate = prompt(`Data efetiva do pagamento da fatura ${button.dataset.month} de ${cardName(button.dataset.cardId)} (AAAA-MM-DD):`, today());
         if (paymentDate === null) return;
-        if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(paymentDate.trim())) { alert("Informe a data no formato AAAA-MM-DD."); return; }
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(paymentDate.trim())) { alert("Informe a data no formato AAAA-MM-DD."); return; }
         if (!confirm(`Confirmar pagamento da fatura ${button.dataset.month} em ${paymentDate.trim()}? O saldo será descontado no mês do pagamento.`)) return;
-        await settleInvoice(button.dataset.cardId, button.dataset.month, "", paymentDate.trim()); await load(); render();
+        const selectedCard = cardById(button.dataset.cardId);
+        if (!selectedCard?.accountId || !accountById(selectedCard.accountId)) {
+          alert("Vincule uma conta bancária válida ao cartão antes de pagar a fatura.");
+          return;
+        }
+        await settleInvoice(button.dataset.cardId, button.dataset.month, selectedCard.accountId, paymentDate.trim()); await load(); render();
       } else if (action === "exportTx") exportTransactions();
       else if (action === "backup") { const path = await invoke("create_backup"); setMessage("backupMsg", `Backup criado em ${path}`); }
       else if (action === "snapshot") { const data = await invoke("export_snapshot"); download(`financa-simples-backup-${today()}.json`, JSON.stringify(data, null, 2), "application/json"); }
