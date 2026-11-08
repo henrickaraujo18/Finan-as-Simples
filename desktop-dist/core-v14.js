@@ -194,7 +194,13 @@
   function isTransfer(item) { return item.kind === "transfer"; }
   function isCardPayment(item) { return item.kind === "card_payment"; }
   function isCardPurchase(item) { return isExpense(item) && item.paymentMethod === "credit_card"; }
-  function txAccountId(item) { return item.accountId || ""; }
+  function txAccountId(item) {
+    if (item.accountId) return item.accountId;
+    // Compatibilidade: pagamentos antigos sem conta explícita utilizam a conta vinculada ao cartão.
+    // Não altera o registro histórico e evita deixar a baixa fora do saldo da conta.
+    if (isCardPayment(item)) return cardById(item.cardId)?.accountId || "";
+    return "";
+  }
 
   // Realizados usam a data da baixa; pendências e compras no cartão mantêm o vencimento.
   function effectiveDate(item) {
