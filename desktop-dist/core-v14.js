@@ -493,7 +493,16 @@
     const items = tx().filter((item) => item.cardId === cardId && (monthOf(item.dueDate) || item.invoiceMonth || monthOf(item.date)) === invoiceMonth && isCardPurchase(item) && item.status !== "paid");
     if (!items.length) return;
     const amountCents = items.reduce((sum, item) => sum + Number(item.amountCents || 0), 0);
+    // Uma baixa não pode confirmar parcelas sem registrar a saída na conta correta.
     const accountId = accountIdOverride || card.accountId || "";
+    if (!accountId || !accountById(accountId)) {
+      throw new Error("Defina uma conta bancária válida no cadastro do cartão antes de pagar a fatura.");
+    }
+    // Não criar duas saídas para a mesma fatura se dados antigos estiverem inconsistentes.
+    const existingPayments = tx().filter((item) => isCardPayment(item) && item.cardId === cardId && item.invoiceMonth === invoiceMonth && item.status === "paid");
+    if (existingPayments.length) {
+      throw new Error("Já existe pagamento registrado para esta fatura. Verifique o lançamento antes de realizar outra baixa.");
+    }
     const updates = items.map((item) => {
       const data = { ...item, status: "paid", paidAt: paymentDate };
       delete data.id; delete data._updatedAt;
