@@ -231,7 +231,7 @@
   function totalCashBalance(throughDate = "9999-12-31") {
     const linkedBalances = accounts().reduce((sum, account) => sum + accountBalance(account.id, throughDate), 0);
     const unlinkedMovement = tx().reduce((sum, item) => {
-      if (item.status !== "paid" || (item.accountId && accountById(item.accountId)) || effectiveDate(item) > throughDate) return sum;
+      if (item.status !== "paid" || (txAccountId(item) && accountById(txAccountId(item))) || effectiveDate(item) > throughDate) return sum;
       if (isIncome(item)) return sum + Number(item.amountCents || 0);
       if (isExpense(item) && !isCardPurchase(item)) return sum - Number(item.amountCents || 0);
       if (isCardPayment(item)) return sum - Number(item.amountCents || 0);
