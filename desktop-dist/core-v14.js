@@ -225,7 +225,7 @@
   function totalCashBalance(throughDate = "9999-12-31") {
     const linkedBalances = accounts().reduce((sum, account) => sum + accountBalance(account.id, throughDate), 0);
     const unlinkedMovement = tx().reduce((sum, item) => {
-      if (item.status !== "paid" || item.accountId || effectiveDate(item) > throughDate) return sum;
+      if (item.status !== "paid" || (item.accountId && accountById(item.accountId)) || effectiveDate(item) > throughDate) return sum;
       if (isIncome(item)) return sum + Number(item.amountCents || 0);
       if (isExpense(item) && !isCardPurchase(item)) return sum - Number(item.amountCents || 0);
       if (isCardPayment(item)) return sum - Number(item.amountCents || 0);
@@ -245,7 +245,8 @@
   function invoiceGroups() {
     const groups = new Map();
     for (const item of tx().filter((x) => isCardPurchase(x) && x.cardId)) {
-      const invoiceMonth = item.invoiceMonth || monthOf(item.dueDate);
+      // O vencimento é a competência da fatura; um invoiceMonth legado divergente não pode mover a fatura para outro mês.
+      const invoiceMonth = monthOf(item.dueDate) || item.invoiceMonth || monthOf(item.date);
       const key = `${item.cardId}|${invoiceMonth}`;
       if (!groups.has(key)) groups.set(key, { cardId: item.cardId, invoiceMonth, amountCents: 0, pendingCents: 0, paidCents: 0, items: [] });
       const group = groups.get(key);
@@ -483,15 +484,18 @@
     await save("transactions", data, id);
   }
 
-  async function settleInvoice(cardId, invoiceMonth, accountIdOverride = "") {
+  async function settleInvoice(cardId, invoiceMonth, accountIdOverride = "", paymentDate = today()) {
     const card = cardById(cardId);
     if (!card) throw new Error("Cartão não encontrado.");
-    const items = tx().filter((item) => item.cardId === cardId && item.invoiceMonth === invoiceMonth && isCardPurchase(item) && item.status !== "paid");
+    if (!/^\d{4}-\d{2}$/.test(String(invoiceMonth)) || !/^\d{4}-\d{2}-\d{2}$/.test(String(paymentDate)) || !Number.isFinite(Date.parse(paymentDate)) || new Date(paymentDate).toISOString().slice(0, 10) !== paymentDate) {
+      throw new Error("Competência ou data de pagamento inválida.");
+    }
+    const items = tx().filter((item) => item.cardId === cardId && (monthOf(item.dueDate) || item.invoiceMonth || monthOf(item.date)) === invoiceMonth && isCardPurchase(item) && item.status !== "paid");
     if (!items.length) return;
     const amountCents = items.reduce((sum, item) => sum + Number(item.amountCents || 0), 0);
     const accountId = accountIdOverride || card.accountId || "";
     const updates = items.map((item) => {
-      const data = { ...item, status: "paid", paidAt: today() };
+      const data = { ...item, status: "paid", paidAt: paymentDate };
       delete data.id; delete data._updatedAt;
       return { type: "transactions", id: item.id, data };
     });
@@ -507,7 +511,8 @@
         cardId,
         invoiceMonth,
         amountCents,
-        date: today(),
+        date: paymentDate,
+        paidAt: paymentDate,
         dueDate: buildDate(Number(invoiceMonth.slice(0, 4)), Number(invoiceMonth.slice(5, 7)), Number(card.dueDay || 10)),
         status: "paid",
         paymentMethod: "transfer",

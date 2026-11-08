@@ -192,8 +192,13 @@ jobs:
           }
           Write-Host "Chaves de assinatura disponíveis: build de atualização permitido."
 
-      - name: Testar cálculos financeiros do frontend
-        run: npm run test:financial
+      - name: Testar cálculos financeiros do frontend e correções de faturas
+        shell: pwsh
+        run: |
+          npm run test:financial
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node tests/card-invoice-regression.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Testar banco local, autenticação e relações financeiras
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib
