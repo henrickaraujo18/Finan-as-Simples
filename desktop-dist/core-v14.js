@@ -538,6 +538,50 @@
     await bulkSave(updates);
   }
 
+  // Estorno contábil da baixa: preserva o pagamento original no histórico, sem
+  // produzir uma segunda movimentação bancária nem excluir registros.
+  async function reverseInvoice(cardId, invoiceMonth, reason = "") {
+    if (!cardById(cardId)) throw new Error("Cartão não encontrado.");
+    if (!/^\\d{4}-(0[1-9]|1[0-2])$/.test(String(invoiceMonth))) {
+      throw new Error("Competência da fatura inválida.");
+    }
+    const payments = tx().filter((item) =>
+      isCardPayment(item) && item.cardId === cardId &&
+      item.invoiceMonth === invoiceMonth && item.status === "paid");
+    if (payments.length !== 1) {
+      throw new Error("O estorno exige exatamente um pagamento ativo para esta fatura.");
+    }
+    const purchases = tx().filter((item) =>
+      isCardPurchase(item) && item.cardId === cardId &&
+      (monthOf(item.dueDate) || item.invoiceMonth || monthOf(item.date)) === invoiceMonth);
+    if (!purchases.length || purchases.some((item) => item.status !== "paid")) {
+      throw new Error("A fatura possui parcelas pendentes ou inconsistentes. Concilie antes de estornar.");
+    }
+    const payment = payments[0];
+    const amountCents = purchases.reduce((sum, item) => sum + Number(item.amountCents || 0), 0);
+    if (!Number.isSafeInteger(amountCents) || amountCents <= 0 ||
+        amountCents !== Number(payment.amountCents || 0)) {
+      throw new Error("O valor pago difere das parcelas da fatura. Concilie antes de estornar.");
+    }
+    const reversedAt = today();
+    const updates = purchases.map((item) => {
+      const data = { ...item, status: "pending", reversedAt, reversalPaymentId: payment.id };
+      delete data.paidAt;
+      delete data.id;
+      delete data._updatedAt;
+      return { type: "transactions", id: item.id, data };
+    });
+    const paymentData = {
+      ...payment, status: "reversed", reversedAt,
+      reversalReason: String(reason || "").trim().slice(0, 500),
+    };
+    delete paymentData.id;
+    delete paymentData._updatedAt;
+    updates.push({ type: "transactions", id: payment.id, data: paymentData });
+    // Uma única transação no backend persiste todas as alterações.
+    await bulkSave(updates);
+  }
+
   function parseCsv(text) {
     const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/).filter((line) => line.trim());
     if (lines.length < 2) return [];
@@ -615,7 +659,7 @@
     accountBalance, totalCashBalance, cardUsed, cardAvailable, invoiceGroups,
     monthMetrics, expenseRanking, incomeRanking, cardCategoryRanking, cardRanking,
     annualMetrics, monthlySeries, investmentMetrics,
-    saveRegularLaunch, saveCardLaunch, saveTransfer, settleTransaction, settleInvoice,
+    saveRegularLaunch, saveCardLaunch, saveTransfer, settleTransaction, settleInvoice, reverseInvoice,
     importInvoice,
   };
 })();
