@@ -10,7 +10,7 @@
     accountBalance, totalCashBalance, cardUsed, cardAvailable, invoiceGroups,
     monthMetrics, expenseRanking, incomeRanking, cardCategoryRanking, cardRanking,
     annualMetrics, investmentMetrics,
-    saveRegularLaunch, saveCardLaunch, saveTransfer, settleTransaction, settleInvoice,
+    saveRegularLaunch, saveCardLaunch, saveTransfer, settleTransaction, settleInvoice, reverseInvoice,
     importInvoice,
   } = C;
 
@@ -212,7 +212,7 @@
     return `<section class="hero"><div><h2>Contas & Cartões</h2><p>Os bancos são cadastros auxiliares como no MENU da planilha; não são obrigatórios nos lançamentos. Cartões usam fechamento, vencimento e Área.</p></div><div>${tag(`${accounts().length} conta(s)`)} ${tag(`${cards().length} cartão(ões)`)}</div></section><div class="two-col">${accountForm()}${cardForm()}</div>
       <section class="panel"><div class="panel-head"><h3>Bancos e dinheiro</h3><strong>${money(totalCashBalance())}</strong></div><div class="table-wrap"><table><thead><tr><th>Conta</th><th>Instituição</th><th>Tipo</th><th class="right">Saldo</th><th></th></tr></thead><tbody>${accounts().map((item) => `<tr><td>${esc(item.name)}</td><td>${esc(item.institution || "—")}</td><td>${esc(ACCOUNT_TYPES[item.type] || "Outra")}</td><td class="right">${money(accountBalance(item.id))}</td><td class="right"><button class="ghost" data-action="edit" data-type="accounts" data-id="${item.id}">Editar</button></td></tr>`).join("")}</tbody></table></div></section>
       <section class="panel"><div class="panel-head"><h3>Cartões</h3></div><div class="cards-grid">${cards().length ? cards().map((card) => `<article class="credit-card"><div class="credit-card-top"><div><strong>${esc(card.name)}</strong><small>${esc(card.institution || "")}${card.last4 ? ` •••• ${esc(card.last4)}` : ""}</small></div>${tag(card.active === false ? "Inativo" : card.brand || "Cartão", card.active === false ? "" : "ok")}</div><div class="credit-card-values"><div><span>Fechamento</span><strong>dia ${esc(card.closingDay)}</strong></div><div><span>Vencimento</span><strong>dia ${esc(card.dueDay)}</strong></div><div><span>Em aberto</span><strong>${money(cardUsed(card.id))}</strong></div></div><div class="credit-card-foot"><span>Área: ${esc(categoryById(card.areaCategoryId)?.name || "não definida")}</span><span>${Number(card.limitCents || 0) ? `Disponível: ${money(cardAvailable(card))}` : "Limite não informado"}</span></div><div class="button-row"><button class="ghost" data-action="edit" data-type="cards" data-id="${card.id}">Editar</button><button class="danger ghost" data-action="delete" data-type="cards" data-id="${card.id}">Excluir</button></div></article>`).join("") : `<div class="empty-card">Cadastre os cartões usados na planilha.</div>`}</div></section>
-      <section class="panel"><div class="panel-head"><h3>Faturas e parcelas</h3><span class="muted">É possível marcar a fatura como paga mesmo sem vincular banco.</span></div><div class="table-wrap"><table><thead><tr><th>Mês</th><th>Cartão</th><th>Itens</th><th class="right">Total</th><th class="right">A pagar</th><th>Status</th><th></th></tr></thead><tbody>${invoices.length ? invoices.map((group) => `<tr><td>${esc(group.invoiceMonth)}</td><td>${esc(cardName(group.cardId))}</td><td>${group.items.length}</td><td class="right">${money(group.amountCents)}</td><td class="right">${money(group.pendingCents)}</td><td>${group.pendingCents ? tag("A pagar", "warn") : tag("Paga", "ok")}</td><td class="right">${group.pendingCents ? `<button class="primary compact" data-action="payInvoice" data-card-id="${group.cardId}" data-month="${group.invoiceMonth}">Pagar fatura</button>` : ""}</td></tr>`).join("") : `<tr><td colspan="7" class="empty">Nenhuma fatura gerada.</td></tr>`}</tbody></table></div></section>`;
+      <section class="panel"><div class="panel-head"><h3>Faturas e parcelas</h3><span class="muted">É possível marcar a fatura como paga mesmo sem vincular banco.</span></div><div class="table-wrap"><table><thead><tr><th>Mês</th><th>Cartão</th><th>Itens</th><th class="right">Total</th><th class="right">A pagar</th><th>Status</th><th></th></tr></thead><tbody>${invoices.length ? invoices.map((group) => `<tr><td>${esc(group.invoiceMonth)}</td><td>${esc(cardName(group.cardId))}</td><td>${group.items.length}</td><td class="right">${money(group.amountCents)}</td><td class="right">${money(group.pendingCents)}</td><td>${group.pendingCents ? tag("A pagar", "warn") : tag("Paga", "ok")}</td><td class="right">${group.pendingCents ? `<button class="primary compact" data-action="payInvoice" data-card-id="${group.cardId}" data-month="${group.invoiceMonth}">Pagar fatura</button>` : tx().some((item) => item.kind === "card_payment" && item.cardId === group.cardId && item.invoiceMonth === group.invoiceMonth && item.status === "paid") ? `<button class="danger ghost compact" data-action="reverseInvoice" data-card-id="${group.cardId}" data-month="${group.invoiceMonth}">Estornar pagamento</button>` : ""}</td></tr>`).join("") : `<tr><td colspan="7" class="empty">Nenhuma fatura gerada.</td></tr>`}</tbody></table></div></section>`;
   }
 
   function annualPage() {
@@ -347,6 +347,14 @@
           return;
         }
         await settleInvoice(button.dataset.cardId, button.dataset.month, selectedCard.accountId, paymentDate.trim()); await load(); render();
+      } else if (action === "reverseInvoice") {
+        const month = button.dataset.month;
+        const cardId = button.dataset.cardId;
+        if (!confirm(`Estornar o pagamento da fatura ${month} de ${cardName(cardId)}? O valor voltará ao saldo bancário, as parcelas ficarão pendentes e o pagamento original será mantido no histórico como estornado.`)) return;
+        const reason = prompt("Motivo do estorno (opcional):", "");
+        if (reason === null) return;
+        await reverseInvoice(cardId, month, reason);
+        await load(); render();
       } else if (action === "exportTx") exportTransactions();
       else if (action === "backup") { const path = await invoke("create_backup"); setMessage("backupMsg", `Backup criado em ${path}`); }
       else if (action === "snapshot") { const data = await invoke("export_snapshot"); download(`financa-simples-backup-${today()}.json`, JSON.stringify(data, null, 2), "application/json"); }
