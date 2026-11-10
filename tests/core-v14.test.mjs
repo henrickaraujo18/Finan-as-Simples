@@ -209,3 +209,50 @@ test("pagamento legado sem conta explícita reflete na conta vinculada sem dupli
   assert.equal(C.accountBalance("bank"), 85_000);
   assert.equal(C.totalCashBalance(), 85_000);
 });
+
+test("estorno de fatura restaura saldo, limite e parcelas sem excluir pagamento histórico", async () => {
+  const { C, calls } = engine();
+  C.S.settings = { ...C.DEFAULT_SETTINGS };
+  C.S.data.accounts = [{ id: "bank", openingBalanceCents: 100_000 }];
+  C.S.data.cards = [{ id: "card", name: "Cartão", accountId: "bank", limitCents: 60_000 }];
+  C.S.data.transactions = [
+    { id: "part-1", kind: "expense", paymentMethod: "credit_card", cardId: "card", amountCents: 12_000, date: "2026-08-20", dueDate: "2026-09-10", status: "paid", paidAt: "2026-11-07" },
+    { id: "part-2", kind: "expense", paymentMethod: "credit_card", cardId: "card", amountCents: 8_000, date: "2026-08-25", dueDate: "2026-09-10", status: "paid", paidAt: "2026-11-07" },
+    { id: "payment", kind: "card_payment", invoiceMonth: "2026-09", cardId: "card", accountId: "bank", amountCents: 20_000, date: "2026-11-07", status: "paid" },
+  ];
+  assert.equal(C.accountBalance("bank"), 80_000);
+  assert.equal(C.monthMetrics("2026-11").expensePaid, 20_000);
+  await C.reverseInvoice("card", "2026-09", "Pagamento lançado por engano");
+  const batch = calls.find((x) => x.command === "upsert_entities").args.inputs;
+  assert.equal(batch.length, 3);
+  assert.equal(batch.find((x) => x.id === "payment").data.status, "reversed");
+  assert.equal(batch.filter((x) => x.data.status === "pending").length, 2);
+  assert.equal(batch.find((x) => x.id === "part-1").data.paidAt, undefined);
+  C.S.data.transactions = batch.map((x) => ({ id: x.id, ...x.data }));
+  assert.equal(C.accountBalance("bank"), 100_000);
+  assert.equal(C.totalCashBalance(), 100_000);
+  assert.equal(C.monthMetrics("2026-11").expensePaid, 0);
+  assert.equal(C.monthMetrics("2026-09").expensePending, 20_000);
+  assert.equal(C.cardUsed("card"), 20_000);
+  assert.equal(C.cardAvailable(C.S.data.cards[0]), 40_000);
+  assert.equal(C.S.data.transactions.find((x) => x.id === "payment").reversalReason, "Pagamento lançado por engano");
+  await assert.rejects(() => C.reverseInvoice("card", "2026-09"), /exatamente um pagamento ativo/);
+  C.S.data.transactions.push({ id: "new-payment", kind: "card_payment", invoiceMonth: "2026-09", cardId: "card", accountId: "bank", amountCents: 20_000, date: "2026-11-09", status: "paid" });
+  C.S.data.transactions[0].status = "paid"; C.S.data.transactions[1].status = "paid";
+  await C.reverseInvoice("card", "2026-09");
+  assert.equal(calls.filter((x) => x.command === "upsert_entities").length, 2);
+});
+
+test("estorno bloqueia faturas com pagamento parcial ou valores incompatíveis sem gravar dados", async () => {
+  const { C, calls } = engine();
+  C.S.data.cards = [{ id: "card", name: "Cartão" }];
+  C.S.data.transactions = [
+    { id: "p1", kind: "expense", paymentMethod: "credit_card", cardId: "card", dueDate: "2026-09-10", status: "paid", amountCents: 9000 },
+    { id: "p2", kind: "expense", paymentMethod: "credit_card", cardId: "card", dueDate: "2026-09-10", status: "pending", amountCents: 1000 },
+    { id: "payment", kind: "card_payment", invoiceMonth: "2026-09", cardId: "card", status: "paid", amountCents: 9000 },
+  ];
+  await assert.rejects(() => C.reverseInvoice("card", "2026-09"), /parcelas pendentes/);
+  C.S.data.transactions[1].status = "paid";
+  await assert.rejects(() => C.reverseInvoice("card", "2026-09"), /valor pago difere/);
+  assert.equal(calls.some((x) => x.command === "upsert_entities"), false);
+});
