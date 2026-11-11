@@ -189,6 +189,7 @@
     return buildDate(base.getFullYear(), base.getMonth() + 1, dueDay);
   }
 
+  const invoiceMutationLocks = new Set();
   function isExpense(item) { return item.kind === "expense"; }
   function isIncome(item) { return item.kind === "income"; }
   function isTransfer(item) { return item.kind === "transfer"; }
@@ -263,6 +264,29 @@
     return [...groups.values()].sort((a, b) => `${a.invoiceMonth}${a.cardId}`.localeCompare(`${b.invoiceMonth}${b.cardId}`));
   }
 
+  // Pagamentos ativos para a mesma competência devem ser conciliados, nunca somados automaticamente.
+  function invoicePaymentConflicts() {
+    const groups = new Map();
+    for (const item of tx().filter((row) => isCardPayment(row) && row.status === "paid")) {
+      const month = item.invoiceMonth || monthOf(item.dueDate);
+      if (!item.cardId || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) continue;
+      const key = `${item.cardId}|${month}`;
+      if (!groups.has(key)) groups.set(key, { cardId: item.cardId, invoiceMonth: month, payments: [] });
+      groups.get(key).payments.push(item);
+    }
+    return [...groups.values()].filter((group) => group.payments.length > 1);
+  }
+
+  function invoiceExpenseCandidates(cardId, invoiceMonth, accountId, amountCents, paymentDate) {
+    if (!cardId || !accountId) return [];
+    return tx().filter((item) =>
+      isExpense(item) && !isCardPurchase(item) && item.status === "paid" &&
+      txAccountId(item) === accountId &&
+      Number(item.amountCents || 0) === amountCents &&
+      effectiveDate(item) === paymentDate &&
+      (/fatura|cart[aã]o/i.test(String(item.description || "")) ||
+        /fatura/i.test(String(categoryName(item)))));
+  }
   function cardPaymentsForMonth(month) {
     return tx().filter((item) => isCardPayment(item) && item.status === "paid" && effectiveMonth(item) === month);
   }
@@ -542,7 +566,7 @@
   // produzir uma segunda movimentação bancária nem excluir registros.
   async function reverseInvoice(cardId, invoiceMonth, reason = "") {
     if (!cardById(cardId)) throw new Error("Cartão não encontrado.");
-    if (!/^\\d{4}-(0[1-9]|1[0-2])$/.test(String(invoiceMonth))) {
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(String(invoiceMonth))) {
       throw new Error("Competência da fatura inválida.");
     }
     const payments = tx().filter((item) =>
@@ -660,6 +684,7 @@
     monthMetrics, expenseRanking, incomeRanking, cardCategoryRanking, cardRanking,
     annualMetrics, monthlySeries, investmentMetrics,
     saveRegularLaunch, saveCardLaunch, saveTransfer, settleTransaction, settleInvoice, reverseInvoice,
+    invoiceExpenseCandidates, invoicePaymentConflicts,
     importInvoice,
   };
 })();
