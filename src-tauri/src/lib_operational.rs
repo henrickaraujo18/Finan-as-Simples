@@ -578,6 +578,40 @@ fn upsert_in_transaction(
         return Err("o conteúdo do registro precisa ser um objeto JSON".to_string());
     }
 
+    // Restrição transacional: uma fatura não pode ter dois pagamentos ativos.
+    // A verificação ocorre sob o mesmo lock/transaction SQLite que fará o INSERT.
+    if input.entity_type == "transactions"
+        && input.data.get("kind").and_then(Value::as_str) == Some("card_payment")
+        && input.data.get("status").and_then(Value::as_str) == Some("paid")
+    {
+        let card_id = input.data.get("cardId").and_then(Value::as_str).unwrap_or("");
+        let month = input.data.get("invoiceMonth").and_then(Value::as_str).unwrap_or("");
+        if card_id.is_empty() || month.len() != 7 || &month[4..5] != "-" {
+            return Err("pagamento de fatura sem cartão ou competência válida".to_string());
+        }
+        let current_id = input.id.as_deref().unwrap_or("");
+        let active: i64 = transaction.query_row(
+            "SELECT COUNT(*) FROM entities
+             WHERE workspace_id=?1 AND entity_type='transactions' AND deleted=0
+               AND json_extract(data_json, '$.kind')='card_payment'
+               AND json_extract(data_json, '$.status')='paid'
+               AND json_extract(data_json, '$.cardId')=?2
+               AND json_extract(data_json, '$.invoiceMonth')=?3",
+            params![workspace_id, card_id, month], |row| row.get(0)
+        ).map_err(|error| format!("falha ao conferir baixa da fatura: {error}"))?;
+        if active > 0 {
+            return Err("Já existe pagamento ativo para esta fatura. Faça conciliação antes de repetir.".to_string());
+        }
+        if !current_id.is_empty() {
+            let occupied: Option<String> = transaction.query_row(
+                "SELECT data_json FROM entities WHERE id=?1 AND workspace_id=?2 AND deleted=0",
+                params![current_id, workspace_id], |row| row.get(0)
+            ).optional().map_err(|error| error.to_string())?;
+            if occupied.is_some() {
+                return Err("Identificador de pagamento já utilizado. Atualize os dados antes de pagar.".to_string());
+            }
+        }
+    }
     let id = input.id.unwrap_or_else(|| Uuid::new_v4().to_string());
     let now = Utc::now().to_rfc3339();
     let payload = serde_json::to_string(&input.data)
