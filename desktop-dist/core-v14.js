@@ -753,6 +753,13 @@
         const key = importedPurchaseKey(item), ordinal = (seen.get(key) || 0) + 1;
         seen.set(key, ordinal);
         if (ordinal <= (previous.get(key) || 0)) continue;
+        const otherInvoice = tx().find((existing) =>
+          isCardPurchase(existing) && existing.source === "invoice_import" &&
+          existing.cardId === cardId && existing.dueDate !== dueDate &&
+          importedPurchaseKey(existing) === key);
+        if (otherInvoice) {
+          throw new Error(`Compra já registrada na fatura ${monthOf(otherInvoice.dueDate)}. Confira o vencimento da importação.`);
+        }
         toSave.push({ type: "transactions",
           id: `fs-card-import:${cardId}:${invoiceMonth}:${stableImportHash(key)}:${ordinal}`,
           data: {
