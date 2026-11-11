@@ -1477,6 +1477,24 @@ mod tests{
     }
 
     #[test]
+    fn pagamento_de_fatura_e_unico_e_estorno_preserva_historico(){
+        let mut connection=Connection::open_in_memory().unwrap();
+        configure_database(&connection).unwrap();
+        let transaction=connection.transaction().unwrap();
+        let paid=json!({"kind":"card_payment","status":"paid","cardId":"cartao-1","invoiceMonth":"2026-09","amountCents":20000});
+        let first=upsert_in_transaction(&transaction,EntityInput{entity_type:"transactions".to_string(),id:Some("pagamento-1".to_string()),data:paid.clone()},"workspace-1");
+        assert!(first.is_ok());
+        let duplicated=upsert_in_transaction(&transaction,EntityInput{entity_type:"transactions".to_string(),id:Some("pagamento-2".to_string()),data:paid.clone()},"workspace-1");
+        assert!(duplicated.unwrap_err().contains("Já existe pagamento ativo"));
+        let replay=upsert_in_transaction(&transaction,EntityInput{entity_type:"transactions".to_string(),id:Some("pagamento-1".to_string()),data:paid.clone()},"workspace-1");
+        assert!(replay.is_err());
+        upsert_in_transaction(&transaction,EntityInput{entity_type:"transactions".to_string(),id:Some("pagamento-1".to_string()),data:json!({"kind":"card_payment","status":"reversed","cardId":"cartao-1","invoiceMonth":"2026-09","amountCents":20000})},"workspace-1").unwrap();
+        upsert_in_transaction(&transaction,EntityInput{entity_type:"transactions".to_string(),id:Some("pagamento-2".to_string()),data:paid},"workspace-1").unwrap();
+        transaction.commit().unwrap();
+        let count:i64=connection.query_row("SELECT COUNT(*) FROM entities WHERE workspace_id='workspace-1' AND entity_type='transactions' AND json_extract(data_json, '$.status')='paid'",[],|row|row.get(0)).unwrap();
+        assert_eq!(count,1);
+    }
+    #[test]
     fn upsert_isola_registro_por_workspace(){
         let mut connection=Connection::open_in_memory().unwrap();
         configure_database(&connection).unwrap();
