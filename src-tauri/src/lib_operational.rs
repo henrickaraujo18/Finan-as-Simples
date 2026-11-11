@@ -590,8 +590,7 @@ fn upsert_in_transaction(
         let valid_month = month_bytes.len() == 7 && month_bytes[4] == b'-'
             && month_bytes[..4].iter().all(|byte| byte.is_ascii_digit())
             && month_bytes[5..].iter().all(|byte| byte.is_ascii_digit())
-            && month_bytes[5..].iter().fold(0u32, |value, byte| value * 10 + u32::from(byte - b'0')) <= 12
-            && month_bytes[5..].iter().fold(0u32, |value, byte| value * 10 + u32::from(byte - b'0')) >= 1;
+            && (1..=12).contains(&month[5..7].parse::<u8>().unwrap_or(0));
         if card_id.is_empty() || !valid_month {
             return Err("pagamento de fatura sem cartão ou competência válida".to_string());
         }
