@@ -612,10 +612,11 @@
       delete data._updatedAt;
       return { type: "transactions", id: item.id, data };
     });
-    const paymentData = {
-      ...payment, status: "reversed", reversedAt,
-      reversalReason: String(reason || "").trim().slice(0, 500),
-    };
+    const paymentData = payment.reconciledOriginalExpense
+      ? { ...payment.reconciledOriginalExpense, invoiceReconciliationReversedAt: reversedAt,
+          invoiceReconciliationReversalReason: String(reason || "").trim().slice(0, 500) }
+      : { ...payment, status: "reversed", reversedAt,
+          reversalReason: String(reason || "").trim().slice(0, 500) };
     delete paymentData.id;
     delete paymentData._updatedAt;
     updates.push({ type: "transactions", id: payment.id, data: paymentData });
@@ -623,6 +624,29 @@
     await bulkSave(updates);
   }
 
+  // Conciliação manual de um débito realmente duplicado; nunca remove o histórico.
+  async function reverseDuplicateInvoicePayment(paymentId, reason = "") {
+    const payment = tx().find((item) => item.id === paymentId && isCardPayment(item) && item.status === "paid");
+    if (!payment) throw new Error("Pagamento ativo não encontrado.");
+    const lockKey = `${payment.cardId}|${payment.invoiceMonth}`;
+    if (invoiceMutationLocks.has(lockKey)) throw new Error("A fatura está sendo alterada.");
+    invoiceMutationLocks.add(lockKey);
+    try {
+      const conflicts = invoicePaymentConflicts();
+      const group = conflicts.find((item) => item.cardId === payment.cardId && item.invoiceMonth === payment.invoiceMonth);
+      if (!group || group.payments.length < 2) throw new Error("Esta fatura não possui pagamentos ativos duplicados.");
+      const purchases = invoiceGroups().find((item) => item.cardId === payment.cardId && item.invoiceMonth === payment.invoiceMonth);
+      if (!purchases || purchases.pendingCents > 0 ||
+          group.payments.some((item) => Number(item.amountCents || 0) !== purchases.amountCents)) {
+        throw new Error("Os valores não correspondem a pagamentos integrais idênticos. É necessária conciliação manual.");
+      }
+      const data = { ...payment, status: "reversed", reversedAt: today(),
+        reversalReason: String(reason || "Pagamento duplicado identificado na conciliação").trim().slice(0, 500),
+        reversalType: "duplicate_invoice_payment" };
+      delete data.id; delete data._updatedAt;
+      await save("transactions", data, payment.id);
+    } finally { invoiceMutationLocks.delete(lockKey); }
+  }
   function parseCsv(text) {
     const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/).filter((line) => line.trim());
     if (lines.length < 2) return [];
@@ -701,7 +725,7 @@
     monthMetrics, expenseRanking, incomeRanking, cardCategoryRanking, cardRanking,
     annualMetrics, monthlySeries, investmentMetrics,
     saveRegularLaunch, saveCardLaunch, saveTransfer, settleTransaction, settleInvoice, reverseInvoice,
-    invoiceExpenseCandidates, invoicePaymentConflicts,
+    invoiceExpenseCandidates, invoicePaymentConflicts, reverseDuplicateInvoicePayment,
     importInvoice,
   };
 })();
