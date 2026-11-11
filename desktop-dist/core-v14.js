@@ -514,52 +514,69 @@
     await save("transactions", data, id);
   }
 
-  async function settleInvoice(cardId, invoiceMonth, accountIdOverride = "", paymentDate = today()) {
+  async function settleInvoice(cardId, invoiceMonth, accountIdOverride = "", paymentDate = today(), linkedExpenseId = "") {
     const card = cardById(cardId);
     if (!card) throw new Error("Cartão não encontrado.");
-    if (!/^\d{4}-\d{2}$/.test(String(invoiceMonth)) || !/^\d{4}-\d{2}-\d{2}$/.test(String(paymentDate)) || !Number.isFinite(Date.parse(paymentDate)) || new Date(paymentDate).toISOString().slice(0, 10) !== paymentDate) {
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(String(invoiceMonth)) ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(String(paymentDate)) ||
+        !Number.isFinite(Date.parse(paymentDate)) ||
+        new Date(paymentDate).toISOString().slice(0, 10) !== paymentDate) {
       throw new Error("Competência ou data de pagamento inválida.");
     }
-    const items = tx().filter((item) => item.cardId === cardId && (monthOf(item.dueDate) || item.invoiceMonth || monthOf(item.date)) === invoiceMonth && isCardPurchase(item) && item.status !== "paid");
-    if (!items.length) return;
-    const amountCents = items.reduce((sum, item) => sum + Number(item.amountCents || 0), 0);
-    // Uma baixa não pode confirmar parcelas sem registrar a saída na conta correta.
-    const accountId = accountIdOverride || card.accountId || "";
-    if (!accountId || !accountById(accountId)) {
-      throw new Error("Defina uma conta bancária válida no cadastro do cartão antes de pagar a fatura.");
-    }
-    // Não criar duas saídas para a mesma fatura se dados antigos estiverem inconsistentes.
-    const existingPayments = tx().filter((item) => isCardPayment(item) && item.cardId === cardId && item.invoiceMonth === invoiceMonth && item.status === "paid");
-    if (existingPayments.length) {
-      throw new Error("Já existe pagamento registrado para esta fatura. Verifique o lançamento antes de realizar outra baixa.");
-    }
-    const updates = items.map((item) => {
-      const data = { ...item, status: "paid", paidAt: paymentDate };
-      delete data.id; delete data._updatedAt;
-      return { type: "transactions", id: item.id, data };
-    });
-    const faturaCategory = card.areaCategoryId || categoryByName("Faturas 💳", "expense")?.id || "";
-    updates.push({
-      type: "transactions",
-      data: {
-        kind: "card_payment",
-        description: `Fatura ${card.name} ${invoiceMonth}`,
-        counterparty: card.name,
-        categoryId: faturaCategory,
-        accountId,
-        cardId,
-        invoiceMonth,
-        amountCents,
-        date: paymentDate,
-        paidAt: paymentDate,
+    const lockKey = `${cardId}|${invoiceMonth}`;
+    if (invoiceMutationLocks.has(lockKey)) throw new Error("A baixa desta fatura já está sendo processada.");
+    invoiceMutationLocks.add(lockKey);
+    try {
+      const purchases = tx().filter((item) => isCardPurchase(item) && item.cardId === cardId &&
+        (monthOf(item.dueDate) || item.invoiceMonth || monthOf(item.date)) === invoiceMonth);
+      if (!purchases.length) throw new Error("Não há compras nesta fatura.");
+      if (purchases.some((item) => item.status !== "pending")) {
+        throw new Error("A fatura já possui parcelas pagas ou inconsistentes. Concilie antes de repetir o pagamento.");
+      }
+      const amountCents = purchases.reduce((sum, item) => sum + Number(item.amountCents || 0), 0);
+      if (!Number.isSafeInteger(amountCents) || amountCents <= 0) throw new Error("Valor total da fatura inválido.");
+      const accountId = accountIdOverride || card.accountId || "";
+      if (!accountId || !accountById(accountId)) {
+        throw new Error("Defina uma conta bancária válida no cadastro do cartão antes de pagar a fatura.");
+      }
+      const previousPayments = tx().filter((item) => isCardPayment(item) &&
+        item.cardId === cardId && item.invoiceMonth === invoiceMonth);
+      if (previousPayments.some((item) => item.status === "paid")) {
+        throw new Error("Já existe pagamento para esta fatura. Concilie antes de repetir a baixa.");
+      }
+      const candidates = invoiceExpenseCandidates(cardId, invoiceMonth, accountId, amountCents, paymentDate);
+      if (candidates.length && (!linkedExpenseId || !candidates.some((item) => item.id === linkedExpenseId))) {
+        throw new Error("Uma saída de fatura já existe com a mesma conta, data e valor. Vincule-a antes de pagar novamente.");
+      }
+      if (linkedExpenseId && (candidates.length !== 1 || candidates[0].id !== linkedExpenseId)) {
+        throw new Error("O lançamento selecionado para conciliação não corresponde à fatura.");
+      }
+      // Identificador estável entre dispositivos. Após um estorno, preserva a baixa anterior.
+      const generation = previousPayments.filter((item) => item.status === "reversed").length + 1;
+      const paymentId = linkedExpenseId || `fs-invoice-payment:${cardId}:${invoiceMonth}:${generation}`;
+      if (!linkedExpenseId && tx().some((item) => item.id === paymentId)) {
+        throw new Error("Esta tentativa de pagamento já existe. Atualize os dados antes de continuar.");
+      }
+      const updates = purchases.map((item) => {
+        const data = { ...item, status: "paid", paidAt: paymentDate };
+        delete data.id; delete data._updatedAt;
+        return { type: "transactions", id: item.id, data };
+      });
+      const previous = linkedExpenseId ? candidates[0] : null;
+      const originalExpense = previous ? { ...previous } : null;
+      if (originalExpense) { delete originalExpense.id; delete originalExpense._updatedAt; }
+      const faturaCategory = card.areaCategoryId || categoryByName("Faturas 💳", "expense")?.id || "";
+      updates.push({ type: "transactions", id: paymentId, data: {
+        kind: "card_payment", description: `Fatura ${card.name} ${invoiceMonth}`,
+        counterparty: card.name, categoryId: previous?.categoryId || faturaCategory,
+        accountId, cardId, invoiceMonth, amountCents, date: paymentDate, paidAt: paymentDate,
         dueDate: buildDate(Number(invoiceMonth.slice(0, 4)), Number(invoiceMonth.slice(5, 7)), Number(card.dueDay || 10)),
-        status: "paid",
-        paymentMethod: "transfer",
-        flowClass: "fixed",
-        source: "invoice_payment",
-      },
-    });
-    await bulkSave(updates);
+        status: "paid", paymentMethod: "transfer", flowClass: "fixed",
+        source: previous ? "invoice_payment_reconciled" : "invoice_payment",
+        ...(originalExpense ? { reconciledOriginalExpense: originalExpense } : {}),
+      } });
+      await bulkSave(updates);
+    } finally { invoiceMutationLocks.delete(lockKey); }
   }
 
   // Estorno contábil da baixa: preserva o pagamento original no histórico, sem
