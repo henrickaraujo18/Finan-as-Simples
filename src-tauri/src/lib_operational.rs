@@ -607,8 +607,17 @@ fn upsert_in_transaction(
                 "SELECT data_json FROM entities WHERE id=?1 AND workspace_id=?2 AND deleted=0",
                 params![current_id, workspace_id], |row| row.get(0)
             ).optional().map_err(|error| error.to_string())?;
-            if occupied.is_some() {
-                return Err("Identificador de pagamento já utilizado. Atualize os dados antes de pagar.".to_string());
+            if let Some(old_json) = occupied {
+                let old: Value = serde_json::from_str(&old_json).map_err(|error| error.to_string())?;
+                // Vincular explicitamente uma saída já lançada não cria outra movimentação.
+                let linking_existing_expense = input.data.get("source").and_then(Value::as_str)
+                    == Some("invoice_payment_reconciled")
+                    && old.get("kind").and_then(Value::as_str) == Some("expense")
+                    && old.get("status").and_then(Value::as_str) == Some("paid")
+                    && input.data.get("reconciledOriginalExpense") == Some(&old);
+                if !linking_existing_expense {
+                    return Err("Identificador de pagamento já utilizado. Atualize os dados antes de pagar.".to_string());
+                }
             }
         }
     }
