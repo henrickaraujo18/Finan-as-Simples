@@ -934,7 +934,7 @@ dependencies = [
 
 [[package]]
 name = "financa-simples-desktop"
-version = "1.7.4"
+version = "1.7.5"
 dependencies = [
  "argon2",
  "chrono",
