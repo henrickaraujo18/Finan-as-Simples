@@ -1235,10 +1235,14 @@ fn upsert_entity(
 ) -> Result<EntityRow, String> {
     let (user_id,workspace_id,permissions,_) = require_context(&db,&auth)?;
     validate_entity_type(&input.entity_type)?;
-    require_entity_action(&input.entity_type,&permissions,if input.id.is_some(){"edit"}else{"create"})?;
     let entity_type = input.entity_type.clone();
     let mut connection = db.connection.lock().map_err(|_| "banco local indisponível".to_string())?;
     let transaction = connection.transaction().map_err(|error| error.to_string())?;
+    let exists: bool = if let Some(ref id) = input.id {
+        transaction.query_row("SELECT EXISTS(SELECT 1 FROM entities WHERE id=?1 AND workspace_id=?2 AND deleted=0)",
+            params![id,workspace_id], |row| row.get::<_, i64>(0)).map_err(|error| error.to_string())? != 0
+    } else { false };
+    require_entity_action(&input.entity_type,&permissions,if exists{"edit"}else{"create"})?;
     let id = upsert_in_transaction(&transaction,input,&workspace_id)?;
     transaction.commit().map_err(|error| error.to_string())?;
     audit(&connection,Some(&user_id),Some(&workspace_id),"entity_upsert",json!({"entityType":entity_type,"id":id}));
@@ -1256,12 +1260,16 @@ fn upsert_entities(
 ) -> Result<Vec<EntityRow>, String> {
     if inputs.is_empty(){return Ok(vec![]);}
     let (user_id,workspace_id,permissions,_) = require_context(&db,&auth)?;
-    for input in &inputs {
-        validate_entity_type(&input.entity_type)?;
-        require_entity_action(&input.entity_type,&permissions,if input.id.is_some(){"edit"}else{"create"})?;
-    }
+    for input in &inputs { validate_entity_type(&input.entity_type)?; }
     let mut connection = db.connection.lock().map_err(|_| "banco local indisponível".to_string())?;
     let transaction = connection.transaction().map_err(|error| error.to_string())?;
+    for input in &inputs {
+        let exists: bool = if let Some(ref id) = input.id {
+            transaction.query_row("SELECT EXISTS(SELECT 1 FROM entities WHERE id=?1 AND workspace_id=?2 AND deleted=0)",
+                params![id,workspace_id], |row| row.get::<_, i64>(0)).map_err(|error| error.to_string())? != 0
+        } else { false };
+        require_entity_action(&input.entity_type,&permissions,if exists{"edit"}else{"create"})?;
+    }
     let mut ids=Vec::with_capacity(inputs.len());
     for input in inputs { ids.push(upsert_in_transaction(&transaction,input,&workspace_id)?); }
     transaction.commit().map_err(|error| error.to_string())?;
