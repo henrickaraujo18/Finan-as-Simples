@@ -1263,15 +1263,16 @@ fn upsert_entities(
     for input in &inputs { validate_entity_type(&input.entity_type)?; }
     let mut connection = db.connection.lock().map_err(|_| "banco local indisponível".to_string())?;
     let transaction = connection.transaction().map_err(|error| error.to_string())?;
-    for input in &inputs {
+    let mut ids=Vec::with_capacity(inputs.len());
+    for input in inputs {
+        // Permissão é verificada a cada item, após as escritas anteriores do lote.
         let exists: bool = if let Some(ref id) = input.id {
             transaction.query_row("SELECT EXISTS(SELECT 1 FROM entities WHERE id=?1 AND workspace_id=?2 AND deleted=0)",
                 params![id,workspace_id], |row| row.get::<_, i64>(0)).map_err(|error| error.to_string())? != 0
         } else { false };
         require_entity_action(&input.entity_type,&permissions,if exists{"edit"}else{"create"})?;
+        ids.push(upsert_in_transaction(&transaction,input,&workspace_id)?);
     }
-    let mut ids=Vec::with_capacity(inputs.len());
-    for input in inputs { ids.push(upsert_in_transaction(&transaction,input,&workspace_id)?); }
     transaction.commit().map_err(|error| error.to_string())?;
     audit(&connection,Some(&user_id),Some(&workspace_id),"entities_bulk_upsert",json!({"count":ids.len()}));
     let mut rows=Vec::with_capacity(ids.len());
