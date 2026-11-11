@@ -682,32 +682,64 @@
     if (br) return `${br[3].length === 2 ? `20${br[3]}` : br[3]}-${String(br[2]).padStart(2, "0")}-${String(br[1]).padStart(2, "0")}`;
     return today();
   }
+  function importedPurchaseKey(item) {
+    const name = String(item.description || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase().replace(/\s+/g, " ");
+    return `${item.date}|${name}|${Number(item.amountCents || 0)}`;
+  }
+  function stableImportHash(text) {
+    let h1 = 2166136261, h2 = 0x9e3779b9;
+    for (let index = 0; index < text.length; index++) {
+      const code = text.charCodeAt(index);
+      h1 = Math.imul(h1 ^ code, 16777619);
+      h2 = Math.imul(h2 ^ (code + 31), 2246822519);
+    }
+    return [h1, h2].map((value) => (value >>> 0).toString(16).padStart(8, "0")).join("");
+  }
   async function importInvoice(cardId, dueDate, file) {
     const card = cardById(cardId);
     if (!card) throw new Error("Selecione o cartão da fatura.");
     if (!file) throw new Error("Selecione um arquivo CSV.");
-    const items = parseCsv(await file.text());
-    if (!items.length) throw new Error("Nenhum lançamento válido encontrado.");
-    await bulkSave(items.map((item) => ({ type: "transactions", data: {
-      kind: "expense",
-      description: item.description,
-      counterparty: item.description,
-      categoryId: card.areaCategoryId || "",
-      paymentMethod: "credit_card",
-      accountId: "",
-      cardId: card.id,
-      amountCents: item.amountCents,
-      date: item.date,
-      purchaseDate: item.date,
-      dueDate,
-      invoiceMonth: monthOf(dueDate),
-      status: "pending",
-      installmentGroupId: "",
-      installmentNumber: 1,
-      installmentCount: 1,
-      source: "invoice_import",
-    } })));
-    return items.length;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dueDate)) ||
+        new Date(dueDate).toISOString().slice(0, 10) !== dueDate) {
+      throw new Error("Informe uma data de vencimento válida.");
+    }
+    const invoiceMonth = monthOf(dueDate), lockKey = `${cardId}|${invoiceMonth}`;
+    if (invoiceMutationLocks.has(lockKey)) throw new Error("Há outra operação em andamento nesta fatura.");
+    invoiceMutationLocks.add(lockKey);
+    try {
+      if (tx().some((item) => isCardPayment(item) && item.cardId === cardId &&
+          item.invoiceMonth === invoiceMonth && item.status === "paid")) {
+        throw new Error("Fatura já paga. Estorne ou concilie o pagamento antes de importar novas compras.");
+      }
+      const items = parseCsv(await file.text());
+      if (!items.length) throw new Error("Nenhum lançamento válido encontrado.");
+      const previous = new Map(), seen = new Map(), toSave = [];
+      for (const item of tx()) {
+        if (!isCardPurchase(item) || item.cardId !== cardId ||
+            item.source !== "invoice_import" || item.dueDate !== dueDate) continue;
+        const key = importedPurchaseKey(item);
+        previous.set(key, (previous.get(key) || 0) + 1);
+      }
+      for (const item of items) {
+        const key = importedPurchaseKey(item), ordinal = (seen.get(key) || 0) + 1;
+        seen.set(key, ordinal);
+        if (ordinal <= (previous.get(key) || 0)) continue;
+        toSave.push({ type: "transactions",
+          id: `fs-card-import:${cardId}:${invoiceMonth}:${stableImportHash(key)}:${ordinal}`,
+          data: {
+            kind: "expense", description: item.description, counterparty: item.description,
+            categoryId: card.areaCategoryId || "", paymentMethod: "credit_card",
+            accountId: "", cardId, amountCents: item.amountCents,
+            date: item.date, purchaseDate: item.date, dueDate, invoiceMonth,
+            status: "pending", installmentGroupId: "", installmentNumber: 1,
+            installmentCount: 1, source: "invoice_import", importFingerprint: stableImportHash(key),
+            importOrdinal: ordinal,
+          },
+        });
+      }
+      if (toSave.length) await bulkSave(toSave);
+      return toSave.length;
+    } finally { invoiceMutationLocks.delete(lockKey); }
   }
 
   window.FSCore = {
