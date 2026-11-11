@@ -59,6 +59,10 @@ function scenario({ paymentDate, orphanAccount = false }) {
 (async () => {
   await scenario({ paymentDate: "2026-09-15" });
   await scenario({ paymentDate: "2026-11-07" });
-  await scenario({ paymentDate: "2026-11-07", orphanAccount: true });
-  console.log("OK: 3 cenários: fatura setembro, baixa setembro/novembro, conta vinculada/desvinculada.");
+  await assert.rejects(
+    scenario({ paymentDate: "2026-11-07", orphanAccount: true }),
+    /conta bancária válida/,
+    "cartão com conta excluída não pode liquidar fatura sem debitar saldo"
+  );
+  console.log("OK: 3 cenários: competência setembro, baixa setembro/novembro e bloqueio de conta inválida.");
 })().catch((err) => { console.error(err); process.exitCode = 1; });

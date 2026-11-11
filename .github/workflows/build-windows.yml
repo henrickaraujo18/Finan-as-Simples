@@ -301,7 +301,7 @@ jobs:
           Copy-Item $sourceInstaller.FullName $assetPath -Force
           git tag -f desktop-preview $env:GITHUB_SHA
           git push origin desktop-preview --force
-          $notes = "Finança Simples 1.7.2 — release candidate para homologação real: módulos financeiros da planilha Essencial 2025, carteira, metas, Aurora com IA via servidor, cotações B3, indicadores BCB, sincronização offline-first, SQLCipher e backup. Open Finance foi adiado e está fora do escopo desta versão. O canal de atualização automática só é publicado quando a assinatura Tauri estiver configurada. Consulte docs/VALIDATION-1.7.md."
+          $notes = "Finança Simples 1.7.5 — correção de duplicidade de faturas, baixa, estorno e conciliação: módulos financeiros da planilha Essencial 2025, carteira, metas, Aurora com IA via servidor, cotações B3, indicadores BCB, sincronização offline-first, SQLCipher e backup. Open Finance foi adiado e está fora do escopo desta versão. O canal de atualização automática só é publicado quando a assinatura Tauri estiver configurada. Consulte docs/VALIDATION-1.7.md."
           gh release view desktop-preview 2>$null
           if ($LASTEXITCODE -ne 0) {
             gh release create desktop-preview $assetPath --prerelease --title "Finança Simples para Windows" --notes $notes

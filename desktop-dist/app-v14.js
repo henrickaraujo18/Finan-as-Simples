@@ -10,7 +10,9 @@
     accountBalance, totalCashBalance, cardUsed, cardAvailable, invoiceGroups,
     monthMetrics, expenseRanking, incomeRanking, cardCategoryRanking, cardRanking,
     annualMetrics, investmentMetrics,
-    saveRegularLaunch, saveCardLaunch, saveTransfer, settleTransaction, settleInvoice,
+    saveRegularLaunch, saveCardLaunch, saveTransfer, settleTransaction, settleInvoice, reverseInvoice,
+    invoiceExpenseCandidates, invoicePaymentConflicts, reverseDuplicateInvoicePayment,
+    reconcileInvoiceWithExistingPayment,
     importInvoice,
   } = C;
 
@@ -98,6 +100,7 @@
 
   function dashboard() {
     const m = monthMetrics(S.month);
+    const conflicts = invoicePaymentConflicts();
     const currentInvoices = invoiceGroups().filter((g) => g.invoiceMonth === S.month);
     const next = nextMonth(S.month);
     const nextInvoices = invoiceGroups().filter((g) => g.invoiceMonth === next);
@@ -106,6 +109,7 @@
     const cardCats = cardCategoryRanking(S.month);
     const growth = m.openingBalance ? ((m.finalBalance - m.openingBalance) / Math.abs(m.openingBalance)) * 100 : 0;
     return `<section class="hero"><div><h2>${esc(S.settings.profileName)}</h2><p>Visão de ${esc(monthLabel(S.month))} baseada no modelo Finança Simples - Essencial 2025.</p></div><div class="button-row"><button class="ghost" data-page="accounts">Contas & Cartões</button><button class="primary" data-page="transactions">Novo lançamento</button></div></section>
+      ${conflicts.length ? `<section class="panel"><div class="panel-head"><h3>Conciliação obrigatória</h3><span class="muted">${conflicts.length} fatura(s) com mais de um pagamento ativo. Os saldos precisam ser conferidos com o extrato, pois podem conter duplicidade.</span><button class="ghost" data-page="accounts">Revisar faturas</button></div></section>` : ""}
       <section class="report-toolbar panel"><label>Mês de análise<input id="month" type="month" value="${S.month}"></label><span class="muted">Cartão é acompanhado por ciclo de fatura; a compra não duplica a saída mensal.</span></section>
       <section class="kpi-grid">
         ${k("Saída", money(m.expensePaid), `${money(m.expensePending)} a pagar`)}
@@ -209,10 +213,18 @@
   }
   function accountsPage() {
     const invoices = invoiceGroups();
+    const conflicts = invoicePaymentConflicts();
+    const paymentHistory = tx().filter((item) => item.kind === "card_payment")
+      .sort((a, b) => String(b.paidAt || b.date || "").localeCompare(String(a.paidAt || a.date || ""))).slice(0, 50);
     return `<section class="hero"><div><h2>Contas & Cartões</h2><p>Os bancos são cadastros auxiliares como no MENU da planilha; não são obrigatórios nos lançamentos. Cartões usam fechamento, vencimento e Área.</p></div><div>${tag(`${accounts().length} conta(s)`)} ${tag(`${cards().length} cartão(ões)`)}</div></section><div class="two-col">${accountForm()}${cardForm()}</div>
       <section class="panel"><div class="panel-head"><h3>Bancos e dinheiro</h3><strong>${money(totalCashBalance())}</strong></div><div class="table-wrap"><table><thead><tr><th>Conta</th><th>Instituição</th><th>Tipo</th><th class="right">Saldo</th><th></th></tr></thead><tbody>${accounts().map((item) => `<tr><td>${esc(item.name)}</td><td>${esc(item.institution || "—")}</td><td>${esc(ACCOUNT_TYPES[item.type] || "Outra")}</td><td class="right">${money(accountBalance(item.id))}</td><td class="right"><button class="ghost" data-action="edit" data-type="accounts" data-id="${item.id}">Editar</button></td></tr>`).join("")}</tbody></table></div></section>
       <section class="panel"><div class="panel-head"><h3>Cartões</h3></div><div class="cards-grid">${cards().length ? cards().map((card) => `<article class="credit-card"><div class="credit-card-top"><div><strong>${esc(card.name)}</strong><small>${esc(card.institution || "")}${card.last4 ? ` •••• ${esc(card.last4)}` : ""}</small></div>${tag(card.active === false ? "Inativo" : card.brand || "Cartão", card.active === false ? "" : "ok")}</div><div class="credit-card-values"><div><span>Fechamento</span><strong>dia ${esc(card.closingDay)}</strong></div><div><span>Vencimento</span><strong>dia ${esc(card.dueDay)}</strong></div><div><span>Em aberto</span><strong>${money(cardUsed(card.id))}</strong></div></div><div class="credit-card-foot"><span>Área: ${esc(categoryById(card.areaCategoryId)?.name || "não definida")}</span><span>${Number(card.limitCents || 0) ? `Disponível: ${money(cardAvailable(card))}` : "Limite não informado"}</span></div><div class="button-row"><button class="ghost" data-action="edit" data-type="cards" data-id="${card.id}">Editar</button><button class="danger ghost" data-action="delete" data-type="cards" data-id="${card.id}">Excluir</button></div></article>`).join("") : `<div class="empty-card">Cadastre os cartões usados na planilha.</div>`}</div></section>
-      <section class="panel"><div class="panel-head"><h3>Faturas e parcelas</h3><span class="muted">É possível marcar a fatura como paga mesmo sem vincular banco.</span></div><div class="table-wrap"><table><thead><tr><th>Mês</th><th>Cartão</th><th>Itens</th><th class="right">Total</th><th class="right">A pagar</th><th>Status</th><th></th></tr></thead><tbody>${invoices.length ? invoices.map((group) => `<tr><td>${esc(group.invoiceMonth)}</td><td>${esc(cardName(group.cardId))}</td><td>${group.items.length}</td><td class="right">${money(group.amountCents)}</td><td class="right">${money(group.pendingCents)}</td><td>${group.pendingCents ? tag("A pagar", "warn") : tag("Paga", "ok")}</td><td class="right">${group.pendingCents ? `<button class="primary compact" data-action="payInvoice" data-card-id="${group.cardId}" data-month="${group.invoiceMonth}">Pagar fatura</button>` : ""}</td></tr>`).join("") : `<tr><td colspan="7" class="empty">Nenhuma fatura gerada.</td></tr>`}</tbody></table></div></section>`;
+      <section class="panel"><div class="panel-head"><h3>Faturas e parcelas</h3><span class="muted">Cada fatura movimenta o caixa uma única vez. Pagamentos inconsistentes exigem conciliação.</span></div><div class="table-wrap"><table><thead><tr><th>Mês</th><th>Cartão</th><th>Itens</th><th class="right">Total</th><th class="right">A pagar</th><th>Status</th><th></th></tr></thead><tbody>${invoices.length ? invoices.map((group) => `<tr><td>${esc(group.invoiceMonth)}</td><td>${esc(cardName(group.cardId))}</td><td>${group.items.length}</td><td class="right">${money(group.amountCents)}</td><td class="right">${money(group.pendingCents)}</td><td>${group.pendingCents ? tag("A pagar", "warn") : tag("Paga", "ok")}</td><td class="right">${(() => {  const paid = tx().filter((item) => item.kind === "card_payment" && item.cardId === group.cardId && item.invoiceMonth === group.invoiceMonth && item.status === "paid");  if (paid.length > 1) return tag("Pagamento duplicado", "warn");
+ if (paid.length === 1 && group.pendingCents > 0) return `<button class="ghost compact" data-action="reconcileInvoice" data-card-id="${group.cardId}" data-month="${group.invoiceMonth}">Conciliar parcelas</button>`;  if (group.pendingCents > 0) return `<button class="primary compact" data-action="payInvoice" data-card-id="${group.cardId}" data-month="${group.invoiceMonth}">Pagar fatura</button>`;  if (paid.length === 1) return `<button class="danger ghost compact" data-action="reverseInvoice" data-card-id="${group.cardId}" data-month="${group.invoiceMonth}">Estornar pagamento</button>`;  return tag("Sem baixa vinculada", "warn"); })()}</td></tr>`).join("") : `<tr><td colspan="7" class="empty">Nenhuma fatura gerada.</td></tr>`}</tbody></table></div></section>
+      ${conflicts.length ? `<section class="panel"><div class="panel-head"><h3>Conciliação de pagamentos duplicados</h3><span class="muted">Confira o extrato antes de estornar. Nenhum registro será excluído automaticamente.</span></div><div class="table-wrap"><table><thead><tr><th>Competência</th><th>Cartão</th><th>Pagamento</th><th>Conta</th><th class="right">Valor</th><th></th></tr></thead><tbody>${conflicts.flatMap((group) => group.payments.map((payment) => `<tr><td>${esc(group.invoiceMonth)}</td><td>${esc(cardName(group.cardId))}</td><td>${esc(effectiveDate(payment))}</td><td>${esc(accountName(payment.accountId || ""))}</td><td class="right">${money(payment.amountCents)}</td><td class="right"><button class="danger ghost compact" data-action="reverseDuplicateInvoicePayment" data-id="${esc(payment.id)}">Estornar duplicado</button></td></tr>`)).join("")}</tbody></table></div></section>` : ""}
+      <section class="panel"><div class="panel-head"><h3>Histórico de pagamentos de fatura</h3><small>Baixas e estornos registrados, sem duplicar o valor das compras. Mostrando os 50 mais recentes.</small></div>
+        <div class="table-wrap"><table><thead><tr><th>Competência</th><th>Cartão</th><th>Data da baixa</th><th>Conta</th><th class="right">Valor</th><th>Situação</th></tr></thead>
+        <tbody>${paymentHistory.length ? paymentHistory.map((payment) => `<tr><td>${esc(payment.invoiceMonth || "—")}</td><td>${esc(cardName(payment.cardId))}</td><td>${esc(effectiveDate(payment))}</td><td>${esc(accountName(payment.accountId || ""))}</td><td class="right">${money(payment.amountCents)}</td><td>${payment.status === "reversed" ? tag("Estornado") : payment.status === "paid" ? tag(payment.reconciledOriginalExpense ? "Vinculado à saída existente" : "Pago", "ok") : tag("Verificar", "warn")}</td></tr>`).join("") : `<tr><td colspan="6" class="empty">Nenhum pagamento de fatura registrado.</td></tr>`}</tbody></table></div></section>`;
   }
 
   function annualPage() {
@@ -337,11 +349,55 @@
         await remove(type, id); await load(); render();
       } else if (action === "settle") { await settleTransaction(id); await load(); render(); }
       else if (action === "payInvoice") {
-        const paymentDate = prompt(`Data efetiva do pagamento da fatura ${button.dataset.month} de ${cardName(button.dataset.cardId)} (AAAA-MM-DD):`, today());
+        const cardId = button.dataset.cardId, month = button.dataset.month;
+        const paymentDate = prompt(`Data efetiva do pagamento da fatura ${month} de ${cardName(cardId)} (AAAA-MM-DD):`, today());
         if (paymentDate === null) return;
-        if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(paymentDate.trim())) { alert("Informe a data no formato AAAA-MM-DD."); return; }
-        if (!confirm(`Confirmar pagamento da fatura ${button.dataset.month} em ${paymentDate.trim()}? O saldo será descontado no mês do pagamento.`)) return;
-        await settleInvoice(button.dataset.cardId, button.dataset.month, "", paymentDate.trim()); await load(); render();
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(paymentDate.trim())) { alert("Informe a data no formato AAAA-MM-DD."); return; }
+        const selectedCard = cardById(cardId);
+        if (!selectedCard?.accountId || !accountById(selectedCard.accountId)) {
+          alert("Vincule uma conta bancária válida ao cartão antes de pagar a fatura."); return;
+        }
+        const group = invoiceGroups().find((item) => item.cardId === cardId && item.invoiceMonth === month);
+        if (!group) { alert("Fatura não encontrada. Atualize os dados."); return; }
+        const candidates = invoiceExpenseCandidates(cardId, month, selectedCard.accountId, group.pendingCents, paymentDate.trim());
+        if (candidates.length > 1) { alert("Mais de uma saída bancária semelhante foi encontrada. Concilie os lançamentos antes da baixa."); return; }
+        let linkedExpenseId = "";
+        if (candidates.length === 1) {
+          if (!confirm(`Já existe uma saída de ${money(group.pendingCents)} registrada nesta conta e data. Deseja VINCULAR esse lançamento à fatura, sem descontar novamente?`)) return;
+          linkedExpenseId = candidates[0].id;
+        } else if (!confirm(`Confirmar pagamento da fatura ${month} em ${paymentDate.trim()}? Será criada uma única saída bancária.`)) return;
+        if (button.disabled) return;
+        button.disabled = true;
+        try { await settleInvoice(cardId, month, selectedCard.accountId, paymentDate.trim(), linkedExpenseId); await load(); render(); }
+        finally { button.disabled = false; }
+      } else if (action === "reverseInvoice") {
+        const month = button.dataset.month;
+        const cardId = button.dataset.cardId;
+        const receipt = tx().find((item) => item.kind === "card_payment" && item.cardId === cardId && item.invoiceMonth === month && item.status === "paid");
+        const linked = Boolean(receipt?.reconciledOriginalExpense);
+        const message = linked
+          ? "O lançamento bancário anterior será restaurado como despesa; o saldo não aumentará, pois o dinheiro já havia saído da conta."
+          : "O valor retornará ao saldo da conta e o pagamento será preservado como estornado.";
+        if (!confirm(`Estornar o pagamento da fatura ${month} de ${cardName(cardId)}? As parcelas ficarão pendentes. ${message}`)) return;
+        const reason = prompt("Motivo do estorno (opcional):", "");
+        if (reason === null) return;
+        await reverseInvoice(cardId, month, reason);
+        await load(); render();
+      } else if (action === "reconcileInvoice") {
+        const month = button.dataset.month, cardId = button.dataset.cardId;
+        if (!confirm(`O pagamento da fatura ${month} já consta no caixa, mas há parcelas pendentes. Deseja conciliá-las SEM criar uma segunda saída bancária?`)) return;
+        button.disabled = true;
+        try { await reconcileInvoiceWithExistingPayment(cardId, month); await load(); render(); }
+        finally { button.disabled = false; }
+      } else if (action === "reverseDuplicateInvoicePayment") {
+        const payment = tx().find((item) => item.id === id);
+        if (!payment) { alert("Pagamento não localizado."); return; }
+        if (!confirm(`Confirma que este pagamento de ${money(payment.amountCents)} em ${effectiveDate(payment)} é um registro DUPLICADO e NÃO corresponde a outro débito real? A correção restaurará o saldo e manterá o histórico.`)) return;
+        const reason = prompt("Motivo para conciliação (obrigatório):", "Pagamento duplicado identificado");
+        if (!reason?.trim()) return;
+        button.disabled = true;
+        try { await reverseDuplicateInvoicePayment(id, reason); await load(); render(); }
+        finally { button.disabled = false; }
       } else if (action === "exportTx") exportTransactions();
       else if (action === "backup") { const path = await invoke("create_backup"); setMessage("backupMsg", `Backup criado em ${path}`); }
       else if (action === "snapshot") { const data = await invoke("export_snapshot"); download(`financa-simples-backup-${today()}.json`, JSON.stringify(data, null, 2), "application/json"); }

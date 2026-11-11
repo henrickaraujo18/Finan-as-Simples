@@ -578,6 +578,54 @@ fn upsert_in_transaction(
         return Err("o conteúdo do registro precisa ser um objeto JSON".to_string());
     }
 
+    // Restrição transacional: uma fatura não pode ter dois pagamentos ativos.
+    // A verificação ocorre sob o mesmo lock/transaction SQLite que fará o INSERT.
+    if input.entity_type == "transactions"
+        && input.data.get("kind").and_then(Value::as_str) == Some("card_payment")
+        && input.data.get("status").and_then(Value::as_str) == Some("paid")
+    {
+        let card_id = input.data.get("cardId").and_then(Value::as_str).unwrap_or("");
+        let month = input.data.get("invoiceMonth").and_then(Value::as_str).unwrap_or("");
+        let month_bytes = month.as_bytes();
+        let valid_month = month_bytes.len() == 7 && month_bytes[4] == b'-'
+            && month_bytes[..4].iter().all(|byte| byte.is_ascii_digit())
+            && month_bytes[5..].iter().all(|byte| byte.is_ascii_digit())
+            && (1..=12).contains(&month[5..7].parse::<u8>().unwrap_or(0));
+        if card_id.is_empty() || !valid_month {
+            return Err("pagamento de fatura sem cartão ou competência válida".to_string());
+        }
+        let current_id = input.id.as_deref().unwrap_or("");
+        let active: i64 = transaction.query_row(
+            "SELECT COUNT(*) FROM entities
+             WHERE workspace_id=?1 AND entity_type='transactions' AND deleted=0
+               AND json_extract(data_json, '$.kind')='card_payment'
+               AND json_extract(data_json, '$.status')='paid'
+               AND json_extract(data_json, '$.cardId')=?2
+               AND json_extract(data_json, '$.invoiceMonth')=?3",
+            params![workspace_id, card_id, month], |row| row.get(0)
+        ).map_err(|error| format!("falha ao conferir baixa da fatura: {error}"))?;
+        if active > 0 {
+            return Err("Já existe pagamento ativo para esta fatura. Faça conciliação antes de repetir.".to_string());
+        }
+        if !current_id.is_empty() {
+            let occupied: Option<String> = transaction.query_row(
+                "SELECT data_json FROM entities WHERE id=?1 AND workspace_id=?2 AND deleted=0",
+                params![current_id, workspace_id], |row| row.get(0)
+            ).optional().map_err(|error| error.to_string())?;
+            if let Some(old_json) = occupied {
+                let old: Value = serde_json::from_str(&old_json).map_err(|error| error.to_string())?;
+                // Vincular explicitamente uma saída já lançada não cria outra movimentação.
+                let linking_existing_expense = input.data.get("source").and_then(Value::as_str)
+                    == Some("invoice_payment_reconciled")
+                    && old.get("kind").and_then(Value::as_str) == Some("expense")
+                    && old.get("status").and_then(Value::as_str) == Some("paid")
+                    && input.data.get("reconciledOriginalExpense") == Some(&old);
+                if !linking_existing_expense {
+                    return Err("Identificador de pagamento já utilizado. Atualize os dados antes de pagar.".to_string());
+                }
+            }
+        }
+    }
     let id = input.id.unwrap_or_else(|| Uuid::new_v4().to_string());
     let now = Utc::now().to_rfc3339();
     let payload = serde_json::to_string(&input.data)
@@ -1192,10 +1240,14 @@ fn upsert_entity(
 ) -> Result<EntityRow, String> {
     let (user_id,workspace_id,permissions,_) = require_context(&db,&auth)?;
     validate_entity_type(&input.entity_type)?;
-    require_entity_action(&input.entity_type,&permissions,if input.id.is_some(){"edit"}else{"create"})?;
     let entity_type = input.entity_type.clone();
     let mut connection = db.connection.lock().map_err(|_| "banco local indisponível".to_string())?;
     let transaction = connection.transaction().map_err(|error| error.to_string())?;
+    let exists: bool = if let Some(ref id) = input.id {
+        transaction.query_row("SELECT EXISTS(SELECT 1 FROM entities WHERE id=?1 AND workspace_id=?2 AND deleted=0)",
+            params![id,workspace_id], |row| row.get::<_, i64>(0)).map_err(|error| error.to_string())? != 0
+    } else { false };
+    require_entity_action(&input.entity_type,&permissions,if exists{"edit"}else{"create"})?;
     let id = upsert_in_transaction(&transaction,input,&workspace_id)?;
     transaction.commit().map_err(|error| error.to_string())?;
     audit(&connection,Some(&user_id),Some(&workspace_id),"entity_upsert",json!({"entityType":entity_type,"id":id}));
@@ -1213,14 +1265,19 @@ fn upsert_entities(
 ) -> Result<Vec<EntityRow>, String> {
     if inputs.is_empty(){return Ok(vec![]);}
     let (user_id,workspace_id,permissions,_) = require_context(&db,&auth)?;
-    for input in &inputs {
-        validate_entity_type(&input.entity_type)?;
-        require_entity_action(&input.entity_type,&permissions,if input.id.is_some(){"edit"}else{"create"})?;
-    }
+    for input in &inputs { validate_entity_type(&input.entity_type)?; }
     let mut connection = db.connection.lock().map_err(|_| "banco local indisponível".to_string())?;
     let transaction = connection.transaction().map_err(|error| error.to_string())?;
     let mut ids=Vec::with_capacity(inputs.len());
-    for input in inputs { ids.push(upsert_in_transaction(&transaction,input,&workspace_id)?); }
+    for input in inputs {
+        // Permissão é verificada a cada item, após as escritas anteriores do lote.
+        let exists: bool = if let Some(ref id) = input.id {
+            transaction.query_row("SELECT EXISTS(SELECT 1 FROM entities WHERE id=?1 AND workspace_id=?2 AND deleted=0)",
+                params![id,workspace_id], |row| row.get::<_, i64>(0)).map_err(|error| error.to_string())? != 0
+        } else { false };
+        require_entity_action(&input.entity_type,&permissions,if exists{"edit"}else{"create"})?;
+        ids.push(upsert_in_transaction(&transaction,input,&workspace_id)?);
+    }
     transaction.commit().map_err(|error| error.to_string())?;
     audit(&connection,Some(&user_id),Some(&workspace_id),"entities_bulk_upsert",json!({"count":ids.len()}));
     let mut rows=Vec::with_capacity(ids.len());
@@ -1442,6 +1499,24 @@ mod tests{
         assert!(permission_allowed(&permissions,"investments","edit"));
     }
 
+    #[test]
+    fn pagamento_de_fatura_e_unico_e_estorno_preserva_historico(){
+        let mut connection=Connection::open_in_memory().unwrap();
+        configure_database(&connection).unwrap();
+        let transaction=connection.transaction().unwrap();
+        let paid=json!({"kind":"card_payment","status":"paid","cardId":"cartao-1","invoiceMonth":"2026-09","amountCents":20000});
+        let first=upsert_in_transaction(&transaction,EntityInput{entity_type:"transactions".to_string(),id:Some("pagamento-1".to_string()),data:paid.clone()},"workspace-1");
+        assert!(first.is_ok());
+        let duplicated=upsert_in_transaction(&transaction,EntityInput{entity_type:"transactions".to_string(),id:Some("pagamento-2".to_string()),data:paid.clone()},"workspace-1");
+        assert!(duplicated.unwrap_err().contains("Já existe pagamento ativo"));
+        let replay=upsert_in_transaction(&transaction,EntityInput{entity_type:"transactions".to_string(),id:Some("pagamento-1".to_string()),data:paid.clone()},"workspace-1");
+        assert!(replay.is_err());
+        upsert_in_transaction(&transaction,EntityInput{entity_type:"transactions".to_string(),id:Some("pagamento-1".to_string()),data:json!({"kind":"card_payment","status":"reversed","cardId":"cartao-1","invoiceMonth":"2026-09","amountCents":20000})},"workspace-1").unwrap();
+        upsert_in_transaction(&transaction,EntityInput{entity_type:"transactions".to_string(),id:Some("pagamento-2".to_string()),data:paid},"workspace-1").unwrap();
+        transaction.commit().unwrap();
+        let count:i64=connection.query_row("SELECT COUNT(*) FROM entities WHERE workspace_id='workspace-1' AND entity_type='transactions' AND json_extract(data_json, '$.status')='paid'",[],|row|row.get(0)).unwrap();
+        assert_eq!(count,1);
+    }
     #[test]
     fn upsert_isola_registro_por_workspace(){
         let mut connection=Connection::open_in_memory().unwrap();

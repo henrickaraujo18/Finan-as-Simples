@@ -189,12 +189,19 @@
     return buildDate(base.getFullYear(), base.getMonth() + 1, dueDay);
   }
 
+  const invoiceMutationLocks = new Set();
   function isExpense(item) { return item.kind === "expense"; }
   function isIncome(item) { return item.kind === "income"; }
   function isTransfer(item) { return item.kind === "transfer"; }
   function isCardPayment(item) { return item.kind === "card_payment"; }
   function isCardPurchase(item) { return isExpense(item) && item.paymentMethod === "credit_card"; }
-  function txAccountId(item) { return item.accountId || ""; }
+  function txAccountId(item) {
+    if (item.accountId) return item.accountId;
+    // Compatibilidade: pagamentos antigos sem conta explícita utilizam a conta vinculada ao cartão.
+    // Não altera o registro histórico e evita deixar a baixa fora do saldo da conta.
+    if (isCardPayment(item)) return cardById(item.cardId)?.accountId || "";
+    return "";
+  }
 
   // Realizados usam a data da baixa; pendências e compras no cartão mantêm o vencimento.
   function effectiveDate(item) {
@@ -225,7 +232,7 @@
   function totalCashBalance(throughDate = "9999-12-31") {
     const linkedBalances = accounts().reduce((sum, account) => sum + accountBalance(account.id, throughDate), 0);
     const unlinkedMovement = tx().reduce((sum, item) => {
-      if (item.status !== "paid" || (item.accountId && accountById(item.accountId)) || effectiveDate(item) > throughDate) return sum;
+      if (item.status !== "paid" || (txAccountId(item) && accountById(txAccountId(item))) || effectiveDate(item) > throughDate) return sum;
       if (isIncome(item)) return sum + Number(item.amountCents || 0);
       if (isExpense(item) && !isCardPurchase(item)) return sum - Number(item.amountCents || 0);
       if (isCardPayment(item)) return sum - Number(item.amountCents || 0);
@@ -257,6 +264,29 @@
     return [...groups.values()].sort((a, b) => `${a.invoiceMonth}${a.cardId}`.localeCompare(`${b.invoiceMonth}${b.cardId}`));
   }
 
+  // Pagamentos ativos para a mesma competência devem ser conciliados, nunca somados automaticamente.
+  function invoicePaymentConflicts() {
+    const groups = new Map();
+    for (const item of tx().filter((row) => isCardPayment(row) && row.status === "paid")) {
+      const month = item.invoiceMonth || monthOf(item.dueDate);
+      if (!item.cardId || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) continue;
+      const key = `${item.cardId}|${month}`;
+      if (!groups.has(key)) groups.set(key, { cardId: item.cardId, invoiceMonth: month, payments: [] });
+      groups.get(key).payments.push(item);
+    }
+    return [...groups.values()].filter((group) => group.payments.length > 1);
+  }
+
+  function invoiceExpenseCandidates(cardId, invoiceMonth, accountId, amountCents, paymentDate) {
+    if (!cardId || !accountId) return [];
+    return tx().filter((item) =>
+      isExpense(item) && !isCardPurchase(item) && item.status === "paid" &&
+      txAccountId(item) === accountId &&
+      Number(item.amountCents || 0) === amountCents &&
+      effectiveDate(item) === paymentDate &&
+      (/fatura|cart[aã]o/i.test(String(item.description || "")) ||
+        /fatura/i.test(String(categoryName(item)))));
+  }
   function cardPaymentsForMonth(month) {
     return tx().filter((item) => isCardPayment(item) && item.status === "paid" && effectiveMonth(item) === month);
   }
@@ -484,45 +514,168 @@
     await save("transactions", data, id);
   }
 
-  async function settleInvoice(cardId, invoiceMonth, accountIdOverride = "", paymentDate = today()) {
+  async function settleInvoice(cardId, invoiceMonth, accountIdOverride = "", paymentDate = today(), linkedExpenseId = "") {
     const card = cardById(cardId);
     if (!card) throw new Error("Cartão não encontrado.");
-    if (!/^\d{4}-\d{2}$/.test(String(invoiceMonth)) || !/^\d{4}-\d{2}-\d{2}$/.test(String(paymentDate)) || !Number.isFinite(Date.parse(paymentDate)) || new Date(paymentDate).toISOString().slice(0, 10) !== paymentDate) {
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(String(invoiceMonth)) ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(String(paymentDate)) ||
+        !Number.isFinite(Date.parse(paymentDate)) ||
+        new Date(paymentDate).toISOString().slice(0, 10) !== paymentDate) {
       throw new Error("Competência ou data de pagamento inválida.");
     }
-    const items = tx().filter((item) => item.cardId === cardId && (monthOf(item.dueDate) || item.invoiceMonth || monthOf(item.date)) === invoiceMonth && isCardPurchase(item) && item.status !== "paid");
-    if (!items.length) return;
-    const amountCents = items.reduce((sum, item) => sum + Number(item.amountCents || 0), 0);
-    const accountId = accountIdOverride || card.accountId || "";
-    const updates = items.map((item) => {
-      const data = { ...item, status: "paid", paidAt: paymentDate };
-      delete data.id; delete data._updatedAt;
+    const lockKey = `${cardId}|${invoiceMonth}`;
+    if (invoiceMutationLocks.has(lockKey)) throw new Error("A baixa desta fatura já está sendo processada.");
+    invoiceMutationLocks.add(lockKey);
+    try {
+      const purchases = tx().filter((item) => isCardPurchase(item) && item.cardId === cardId &&
+        (monthOf(item.dueDate) || item.invoiceMonth || monthOf(item.date)) === invoiceMonth);
+      if (!purchases.length) throw new Error("Não há compras nesta fatura.");
+      if (purchases.some((item) => item.status !== "pending")) {
+        throw new Error("A fatura já possui parcelas pagas ou inconsistentes. Concilie antes de repetir o pagamento.");
+      }
+      const amountCents = purchases.reduce((sum, item) => sum + Number(item.amountCents || 0), 0);
+      if (!Number.isSafeInteger(amountCents) || amountCents <= 0) throw new Error("Valor total da fatura inválido.");
+      const accountId = accountIdOverride || card.accountId || "";
+      if (!accountId || !accountById(accountId)) {
+        throw new Error("Defina uma conta bancária válida no cadastro do cartão antes de pagar a fatura.");
+      }
+      const previousPayments = tx().filter((item) => isCardPayment(item) &&
+        item.cardId === cardId && item.invoiceMonth === invoiceMonth);
+      if (previousPayments.some((item) => item.status === "paid")) {
+        throw new Error("Já existe pagamento para esta fatura. Concilie antes de repetir a baixa.");
+      }
+      const candidates = invoiceExpenseCandidates(cardId, invoiceMonth, accountId, amountCents, paymentDate);
+      if (candidates.length && (!linkedExpenseId || !candidates.some((item) => item.id === linkedExpenseId))) {
+        throw new Error("Uma saída de fatura já existe com a mesma conta, data e valor. Vincule-a antes de pagar novamente.");
+      }
+      if (linkedExpenseId && (candidates.length !== 1 || candidates[0].id !== linkedExpenseId)) {
+        throw new Error("O lançamento selecionado para conciliação não corresponde à fatura.");
+      }
+      // Identificador estável entre dispositivos. Após um estorno, preserva a baixa anterior.
+      const generation = previousPayments.filter((item) => item.status === "reversed").length + 1;
+      const paymentId = linkedExpenseId || `fs-invoice-payment:${cardId}:${invoiceMonth}:${generation}`;
+      if (!linkedExpenseId && tx().some((item) => item.id === paymentId)) {
+        throw new Error("Esta tentativa de pagamento já existe. Atualize os dados antes de continuar.");
+      }
+      const updates = purchases.map((item) => {
+        const data = { ...item, status: "paid", paidAt: paymentDate };
+        delete data.id; delete data._updatedAt;
+        return { type: "transactions", id: item.id, data };
+      });
+      const previous = linkedExpenseId ? candidates[0] : null;
+      const originalExpense = previous ? { ...previous } : null;
+      if (originalExpense) { delete originalExpense.id; delete originalExpense._updatedAt; }
+      const faturaCategory = card.areaCategoryId || categoryByName("Faturas 💳", "expense")?.id || "";
+      updates.push({ type: "transactions", id: paymentId, data: {
+        kind: "card_payment", description: `Fatura ${card.name} ${invoiceMonth}`,
+        counterparty: card.name, categoryId: previous?.categoryId || faturaCategory,
+        accountId, cardId, invoiceMonth, amountCents, date: paymentDate, paidAt: paymentDate,
+        dueDate: buildDate(Number(invoiceMonth.slice(0, 4)), Number(invoiceMonth.slice(5, 7)), Number(card.dueDay || 10)),
+        status: "paid", paymentMethod: "transfer", flowClass: "fixed",
+        source: previous ? "invoice_payment_reconciled" : "invoice_payment",
+        ...(originalExpense ? { reconciledOriginalExpense: originalExpense } : {}),
+      } });
+      await bulkSave(updates);
+    } finally { invoiceMutationLocks.delete(lockKey); }
+  }
+
+  // Estorno contábil da baixa: preserva o pagamento original no histórico, sem
+  // produzir uma segunda movimentação bancária nem excluir registros.
+  async function reverseInvoice(cardId, invoiceMonth, reason = "") {
+    if (!cardById(cardId)) throw new Error("Cartão não encontrado.");
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(String(invoiceMonth))) {
+      throw new Error("Competência da fatura inválida.");
+    }
+    const payments = tx().filter((item) =>
+      isCardPayment(item) && item.cardId === cardId &&
+      item.invoiceMonth === invoiceMonth && item.status === "paid");
+    if (payments.length !== 1) {
+      throw new Error("O estorno exige exatamente um pagamento ativo para esta fatura.");
+    }
+    const purchases = tx().filter((item) =>
+      isCardPurchase(item) && item.cardId === cardId &&
+      (monthOf(item.dueDate) || item.invoiceMonth || monthOf(item.date)) === invoiceMonth);
+    if (!purchases.length || purchases.some((item) => item.status !== "paid")) {
+      throw new Error("A fatura possui parcelas pendentes ou inconsistentes. Concilie antes de estornar.");
+    }
+    const payment = payments[0];
+    const amountCents = purchases.reduce((sum, item) => sum + Number(item.amountCents || 0), 0);
+    if (!Number.isSafeInteger(amountCents) || amountCents <= 0 ||
+        amountCents !== Number(payment.amountCents || 0)) {
+      throw new Error("O valor pago difere das parcelas da fatura. Concilie antes de estornar.");
+    }
+    const reversedAt = today();
+    const updates = purchases.map((item) => {
+      const data = { ...item, status: "pending", reversedAt, reversalPaymentId: payment.id };
+      delete data.paidAt;
+      delete data.id;
+      delete data._updatedAt;
       return { type: "transactions", id: item.id, data };
     });
-    const faturaCategory = card.areaCategoryId || categoryByName("Faturas 💳", "expense")?.id || "";
-    updates.push({
-      type: "transactions",
-      data: {
-        kind: "card_payment",
-        description: `Fatura ${card.name} ${invoiceMonth}`,
-        counterparty: card.name,
-        categoryId: faturaCategory,
-        accountId,
-        cardId,
-        invoiceMonth,
-        amountCents,
-        date: paymentDate,
-        paidAt: paymentDate,
-        dueDate: buildDate(Number(invoiceMonth.slice(0, 4)), Number(invoiceMonth.slice(5, 7)), Number(card.dueDay || 10)),
-        status: "paid",
-        paymentMethod: "transfer",
-        flowClass: "fixed",
-        source: "invoice_payment",
-      },
-    });
+    const paymentData = payment.reconciledOriginalExpense
+      ? { ...payment.reconciledOriginalExpense, invoiceReconciliationReversedAt: reversedAt,
+          invoiceReconciliationReversalReason: String(reason || "").trim().slice(0, 500) }
+      : { ...payment, status: "reversed", reversedAt,
+          reversalReason: String(reason || "").trim().slice(0, 500) };
+    delete paymentData.id;
+    delete paymentData._updatedAt;
+    updates.push({ type: "transactions", id: payment.id, data: paymentData });
+    // Uma única transação no backend persiste todas as alterações.
     await bulkSave(updates);
   }
 
+  // Conciliação manual de um débito realmente duplicado; nunca remove o histórico.
+  async function reverseDuplicateInvoicePayment(paymentId, reason = "") {
+    const payment = tx().find((item) => item.id === paymentId && isCardPayment(item) && item.status === "paid");
+    if (!payment) throw new Error("Pagamento ativo não encontrado.");
+    const lockKey = `${payment.cardId}|${payment.invoiceMonth}`;
+    if (invoiceMutationLocks.has(lockKey)) throw new Error("A fatura está sendo alterada.");
+    invoiceMutationLocks.add(lockKey);
+    try {
+      const conflicts = invoicePaymentConflicts();
+      const group = conflicts.find((item) => item.cardId === payment.cardId && item.invoiceMonth === payment.invoiceMonth);
+      if (!group || group.payments.length < 2) throw new Error("Esta fatura não possui pagamentos ativos duplicados.");
+      const purchases = invoiceGroups().find((item) => item.cardId === payment.cardId && item.invoiceMonth === payment.invoiceMonth);
+      if (!purchases ||
+          group.payments.some((item) => Number(item.amountCents || 0) !== purchases.amountCents)) {
+        throw new Error("Os valores não correspondem a pagamentos integrais idênticos. É necessária conciliação manual.");
+      }
+      const data = { ...payment, status: "reversed", reversedAt: today(),
+        reversalReason: String(reason || "Pagamento duplicado identificado na conciliação").trim().slice(0, 500),
+        reversalType: "duplicate_invoice_payment" };
+      delete data.id; delete data._updatedAt;
+      await save("transactions", data, payment.id);
+    } finally { invoiceMutationLocks.delete(lockKey); }
+  }
+  // Repara parcelas marcadas como pendentes mesmo quando o banco já foi debitado.
+  // Nenhum lançamento financeiro novo é criado nesta conciliação.
+  async function reconcileInvoiceWithExistingPayment(cardId, invoiceMonth) {
+    const lockKey = `${cardId}|${invoiceMonth}`;
+    if (invoiceMutationLocks.has(lockKey)) throw new Error("Há uma operação em andamento na fatura.");
+    invoiceMutationLocks.add(lockKey);
+    try {
+      const payments = tx().filter((item) => isCardPayment(item) && item.cardId === cardId &&
+        item.invoiceMonth === invoiceMonth && item.status === "paid");
+      if (payments.length !== 1) throw new Error("É necessário existir exatamente um pagamento ativo para conciliar esta fatura.");
+      const purchases = tx().filter((item) => isCardPurchase(item) && item.cardId === cardId &&
+        (monthOf(item.dueDate) || item.invoiceMonth || monthOf(item.date)) === invoiceMonth);
+      const amount = purchases.reduce((sum, item) => sum + Number(item.amountCents || 0), 0);
+      if (!purchases.length || amount <= 0 || amount !== Number(payments[0].amountCents || 0)) {
+        throw new Error("O valor das parcelas difere do pagamento. Verifique os lançamentos antes de conciliar.");
+      }
+      const pending = purchases.filter((item) => item.status === "pending");
+      if (!pending.length) return 0;
+      const paymentDate = payments[0].paidAt || payments[0].date;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(paymentDate))) throw new Error("O pagamento não possui data válida.");
+      await bulkSave(pending.map((item) => {
+        const data = { ...item, status: "paid", paidAt: paymentDate,
+          reconciledPaymentId: payments[0].id, reconciledAt: today() };
+        delete data.id; delete data._updatedAt;
+        return { type: "transactions", id: item.id, data };
+      }));
+      return pending.length;
+    } finally { invoiceMutationLocks.delete(lockKey); }
+  }
   function parseCsv(text) {
     const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/).filter((line) => line.trim());
     if (lines.length < 2) return [];
@@ -558,32 +711,71 @@
     if (br) return `${br[3].length === 2 ? `20${br[3]}` : br[3]}-${String(br[2]).padStart(2, "0")}-${String(br[1]).padStart(2, "0")}`;
     return today();
   }
+  function importedPurchaseKey(item) {
+    const name = String(item.description || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase().replace(/\s+/g, " ");
+    return `${item.date}|${name}|${Number(item.amountCents || 0)}`;
+  }
+  function stableImportHash(text) {
+    let h1 = 2166136261, h2 = 0x9e3779b9;
+    for (let index = 0; index < text.length; index++) {
+      const code = text.charCodeAt(index);
+      h1 = Math.imul(h1 ^ code, 16777619);
+      h2 = Math.imul(h2 ^ (code + 31), 2246822519);
+    }
+    return [h1, h2].map((value) => (value >>> 0).toString(16).padStart(8, "0")).join("");
+  }
   async function importInvoice(cardId, dueDate, file) {
     const card = cardById(cardId);
     if (!card) throw new Error("Selecione o cartão da fatura.");
     if (!file) throw new Error("Selecione um arquivo CSV.");
-    const items = parseCsv(await file.text());
-    if (!items.length) throw new Error("Nenhum lançamento válido encontrado.");
-    await bulkSave(items.map((item) => ({ type: "transactions", data: {
-      kind: "expense",
-      description: item.description,
-      counterparty: item.description,
-      categoryId: card.areaCategoryId || "",
-      paymentMethod: "credit_card",
-      accountId: "",
-      cardId: card.id,
-      amountCents: item.amountCents,
-      date: item.date,
-      purchaseDate: item.date,
-      dueDate,
-      invoiceMonth: monthOf(dueDate),
-      status: "pending",
-      installmentGroupId: "",
-      installmentNumber: 1,
-      installmentCount: 1,
-      source: "invoice_import",
-    } })));
-    return items.length;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dueDate)) ||
+        new Date(dueDate).toISOString().slice(0, 10) !== dueDate) {
+      throw new Error("Informe uma data de vencimento válida.");
+    }
+    const invoiceMonth = monthOf(dueDate), lockKey = `${cardId}|${invoiceMonth}`;
+    if (invoiceMutationLocks.has(lockKey)) throw new Error("Há outra operação em andamento nesta fatura.");
+    invoiceMutationLocks.add(lockKey);
+    try {
+      if (tx().some((item) => isCardPayment(item) && item.cardId === cardId &&
+          item.invoiceMonth === invoiceMonth && item.status === "paid")) {
+        throw new Error("Fatura já paga. Estorne ou concilie o pagamento antes de importar novas compras.");
+      }
+      const items = parseCsv(await file.text());
+      if (!items.length) throw new Error("Nenhum lançamento válido encontrado.");
+      const previous = new Map(), seen = new Map(), toSave = [];
+      for (const item of tx()) {
+        if (!isCardPurchase(item) || item.cardId !== cardId ||
+            item.source !== "invoice_import" || item.dueDate !== dueDate) continue;
+        const key = importedPurchaseKey(item);
+        previous.set(key, (previous.get(key) || 0) + 1);
+      }
+      for (const item of items) {
+        const key = importedPurchaseKey(item), ordinal = (seen.get(key) || 0) + 1;
+        seen.set(key, ordinal);
+        if (ordinal <= (previous.get(key) || 0)) continue;
+        const otherInvoice = tx().find((existing) =>
+          isCardPurchase(existing) && existing.source === "invoice_import" &&
+          existing.cardId === cardId && existing.dueDate !== dueDate &&
+          importedPurchaseKey(existing) === key);
+        if (otherInvoice) {
+          throw new Error(`Compra já registrada na fatura ${monthOf(otherInvoice.dueDate)}. Confira o vencimento da importação.`);
+        }
+        toSave.push({ type: "transactions",
+          id: `fs-card-import:${cardId}:${invoiceMonth}:${stableImportHash(key)}:${ordinal}`,
+          data: {
+            kind: "expense", description: item.description, counterparty: item.description,
+            categoryId: card.areaCategoryId || "", paymentMethod: "credit_card",
+            accountId: "", cardId, amountCents: item.amountCents,
+            date: item.date, purchaseDate: item.date, dueDate, invoiceMonth,
+            status: "pending", installmentGroupId: "", installmentNumber: 1,
+            installmentCount: 1, source: "invoice_import", importFingerprint: stableImportHash(key),
+            importOrdinal: ordinal,
+          },
+        });
+      }
+      if (toSave.length) await bulkSave(toSave);
+      return toSave.length;
+    } finally { invoiceMutationLocks.delete(lockKey); }
   }
 
   window.FSCore = {
@@ -600,7 +792,9 @@
     accountBalance, totalCashBalance, cardUsed, cardAvailable, invoiceGroups,
     monthMetrics, expenseRanking, incomeRanking, cardCategoryRanking, cardRanking,
     annualMetrics, monthlySeries, investmentMetrics,
-    saveRegularLaunch, saveCardLaunch, saveTransfer, settleTransaction, settleInvoice,
+    saveRegularLaunch, saveCardLaunch, saveTransfer, settleTransaction, settleInvoice, reverseInvoice,
+    invoiceExpenseCandidates, invoicePaymentConflicts, reverseDuplicateInvoicePayment,
+    reconcileInvoiceWithExistingPayment,
     importInvoice,
   };
 })();
