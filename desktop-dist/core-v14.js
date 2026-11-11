@@ -636,7 +636,7 @@
       const group = conflicts.find((item) => item.cardId === payment.cardId && item.invoiceMonth === payment.invoiceMonth);
       if (!group || group.payments.length < 2) throw new Error("Esta fatura não possui pagamentos ativos duplicados.");
       const purchases = invoiceGroups().find((item) => item.cardId === payment.cardId && item.invoiceMonth === payment.invoiceMonth);
-      if (!purchases || purchases.pendingCents > 0 ||
+      if (!purchases ||
           group.payments.some((item) => Number(item.amountCents || 0) !== purchases.amountCents)) {
         throw new Error("Os valores não correspondem a pagamentos integrais idênticos. É necessária conciliação manual.");
       }
@@ -645,6 +645,35 @@
         reversalType: "duplicate_invoice_payment" };
       delete data.id; delete data._updatedAt;
       await save("transactions", data, payment.id);
+    } finally { invoiceMutationLocks.delete(lockKey); }
+  }
+  // Repara parcelas marcadas como pendentes mesmo quando o banco já foi debitado.
+  // Nenhum lançamento financeiro novo é criado nesta conciliação.
+  async function reconcileInvoiceWithExistingPayment(cardId, invoiceMonth) {
+    const lockKey = `${cardId}|${invoiceMonth}`;
+    if (invoiceMutationLocks.has(lockKey)) throw new Error("Há uma operação em andamento na fatura.");
+    invoiceMutationLocks.add(lockKey);
+    try {
+      const payments = tx().filter((item) => isCardPayment(item) && item.cardId === cardId &&
+        item.invoiceMonth === invoiceMonth && item.status === "paid");
+      if (payments.length !== 1) throw new Error("É necessário existir exatamente um pagamento ativo para conciliar esta fatura.");
+      const purchases = tx().filter((item) => isCardPurchase(item) && item.cardId === cardId &&
+        (monthOf(item.dueDate) || item.invoiceMonth || monthOf(item.date)) === invoiceMonth);
+      const amount = purchases.reduce((sum, item) => sum + Number(item.amountCents || 0), 0);
+      if (!purchases.length || amount <= 0 || amount !== Number(payments[0].amountCents || 0)) {
+        throw new Error("O valor das parcelas difere do pagamento. Verifique os lançamentos antes de conciliar.");
+      }
+      const pending = purchases.filter((item) => item.status === "pending");
+      if (!pending.length) return 0;
+      const paymentDate = payments[0].paidAt || payments[0].date;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(paymentDate))) throw new Error("O pagamento não possui data válida.");
+      await bulkSave(pending.map((item) => {
+        const data = { ...item, status: "paid", paidAt: paymentDate,
+          reconciledPaymentId: payments[0].id, reconciledAt: today() };
+        delete data.id; delete data._updatedAt;
+        return { type: "transactions", id: item.id, data };
+      }));
+      return pending.length;
     } finally { invoiceMutationLocks.delete(lockKey); }
   }
   function parseCsv(text) {
@@ -758,6 +787,7 @@
     annualMetrics, monthlySeries, investmentMetrics,
     saveRegularLaunch, saveCardLaunch, saveTransfer, settleTransaction, settleInvoice, reverseInvoice,
     invoiceExpenseCandidates, invoicePaymentConflicts, reverseDuplicateInvoicePayment,
+    reconcileInvoiceWithExistingPayment,
     importInvoice,
   };
 })();
