@@ -99,6 +99,7 @@
 
   function dashboard() {
     const m = monthMetrics(S.month);
+    const conflicts = invoicePaymentConflicts();
     const currentInvoices = invoiceGroups().filter((g) => g.invoiceMonth === S.month);
     const next = nextMonth(S.month);
     const nextInvoices = invoiceGroups().filter((g) => g.invoiceMonth === next);
@@ -107,6 +108,7 @@
     const cardCats = cardCategoryRanking(S.month);
     const growth = m.openingBalance ? ((m.finalBalance - m.openingBalance) / Math.abs(m.openingBalance)) * 100 : 0;
     return `<section class="hero"><div><h2>${esc(S.settings.profileName)}</h2><p>Visão de ${esc(monthLabel(S.month))} baseada no modelo Finança Simples - Essencial 2025.</p></div><div class="button-row"><button class="ghost" data-page="accounts">Contas & Cartões</button><button class="primary" data-page="transactions">Novo lançamento</button></div></section>
+      ${conflicts.length ? `<section class="panel"><div class="panel-head"><h3>Conciliação obrigatória</h3><span class="muted">${conflicts.length} fatura(s) com mais de um pagamento ativo. Os saldos precisam ser conferidos com o extrato, pois podem conter duplicidade.</span><button class="ghost" data-page="accounts">Revisar faturas</button></div></section>` : ""}
       <section class="report-toolbar panel"><label>Mês de análise<input id="month" type="month" value="${S.month}"></label><span class="muted">Cartão é acompanhado por ciclo de fatura; a compra não duplica a saída mensal.</span></section>
       <section class="kpi-grid">
         ${k("Saída", money(m.expensePaid), `${money(m.expensePending)} a pagar`)}
@@ -364,7 +366,12 @@
       } else if (action === "reverseInvoice") {
         const month = button.dataset.month;
         const cardId = button.dataset.cardId;
-        if (!confirm(`Estornar o pagamento da fatura ${month} de ${cardName(cardId)}? O valor voltará ao saldo bancário, as parcelas ficarão pendentes e o pagamento original será mantido no histórico como estornado.`)) return;
+        const receipt = tx().find((item) => item.kind === "card_payment" && item.cardId === cardId && item.invoiceMonth === month && item.status === "paid");
+        const linked = Boolean(receipt?.reconciledOriginalExpense);
+        const message = linked
+          ? "O lançamento bancário anterior será restaurado como despesa; o saldo não aumentará, pois o dinheiro já havia saído da conta."
+          : "O valor retornará ao saldo da conta e o pagamento será preservado como estornado.";
+        if (!confirm(`Estornar o pagamento da fatura ${month} de ${cardName(cardId)}? As parcelas ficarão pendentes. ${message}`)) return;
         const reason = prompt("Motivo do estorno (opcional):", "");
         if (reason === null) return;
         await reverseInvoice(cardId, month, reason);
