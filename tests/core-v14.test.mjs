@@ -335,3 +335,25 @@ test("pagamento iniciado duas vezes em paralelo é bloqueado antes de gravar em 
   finish(); await first;
   assert.equal(calls.filter((x) => x.command === "upsert_entities").length, 1);
 });
+
+
+test("fatura antiga paga no caixa mas com parcelas pendentes é conciliada sem novo débito", async () => {
+  const { C, calls } = engine();
+  C.S.data.accounts = [{ id: "bank", openingBalanceCents: 100_000 }];
+  C.S.data.cards = [{ id: "card", name: "Cartão", accountId: "bank" }];
+  C.S.data.transactions = [
+    { id: "purchase", kind: "expense", paymentMethod: "credit_card", cardId: "card", dueDate: "2026-09-10", amountCents: 17_000, status: "pending" },
+    { id: "payment", kind: "card_payment", cardId: "card", invoiceMonth: "2026-09", accountId: "bank", amountCents: 17_000, date: "2026-11-06", status: "paid" },
+  ];
+  assert.equal(C.accountBalance("bank"), 83_000);
+  assert.equal(C.monthMetrics("2026-09").expensePending, 17_000);
+  assert.equal(await C.reconcileInvoiceWithExistingPayment("card", "2026-09"), 1);
+  const batch = calls.find((x) => x.command === "upsert_entities").args.inputs;
+  assert.equal(batch.length, 1);
+  assert.equal(batch[0].id, "purchase");
+  assert.equal(batch[0].data.paidAt, "2026-11-06");
+  C.S.data.transactions[0] = { id: "purchase", ...batch[0].data };
+  assert.equal(C.accountBalance("bank"), 83_000);
+  assert.equal(C.monthMetrics("2026-09").expensePending, 0);
+  assert.equal(C.monthMetrics("2026-11").expensePaid, 17_000);
+});
