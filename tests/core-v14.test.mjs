@@ -256,3 +256,82 @@ test("estorno bloqueia faturas com pagamento parcial ou valores incompatíveis s
   await assert.rejects(() => C.reverseInvoice("card", "2026-09"), /valor pago difere/);
   assert.equal(calls.some((x) => x.command === "upsert_entities"), false);
 });
+
+
+test("fatura reaproveita saída existente explicitamente sem duplicar o saldo", async () => {
+  const { C, calls } = engine();
+  C.S.data.accounts = [{ id: "bank", openingBalanceCents: 100_000 }];
+  C.S.data.categories = [{ id: "faturas", name: "Faturas 💳", kind: "expense" }];
+  C.S.data.cards = [{ id: "card", name: "Cartão", accountId: "bank", dueDay: 10 }];
+  C.S.data.transactions = [
+    { id: "purchase", kind: "expense", paymentMethod: "credit_card", cardId: "card", amountCents: 20_000, dueDate: "2026-09-10", date: "2026-08-21", status: "pending" },
+    { id: "manual", kind: "expense", accountId: "bank", amountCents: 20_000, date: "2026-11-07", status: "paid", categoryId: "faturas", description: "Pagamento fatura cartão" },
+  ];
+  assert.equal(C.accountBalance("bank"), 80_000);
+  await assert.rejects(() => C.settleInvoice("card", "2026-09", "bank", "2026-11-07"), /Vincule/);
+  await C.settleInvoice("card", "2026-09", "bank", "2026-11-07", "manual");
+  const data = calls.filter((x) => x.command === "upsert_entities").at(-1).args.inputs;
+  assert.equal(data.length, 2);
+  assert.equal(data.find((x) => x.data.kind === "card_payment").id, "manual");
+  C.S.data.transactions = data.map((x) => ({ id: x.id, ...x.data }));
+  assert.equal(C.accountBalance("bank"), 80_000);
+  assert.equal(C.monthMetrics("2026-11").expensePaid, 20_000);
+  await C.reverseInvoice("card", "2026-09", "Desfazer associação com lançamento");
+  const undo = calls.filter((x) => x.command === "upsert_entities").at(-1).args.inputs;
+  assert.equal(undo.find((x) => x.id === "manual").data.kind, "expense");
+  C.S.data.transactions = undo.map((x) => ({ id: x.id, ...x.data }));
+  assert.equal(C.accountBalance("bank"), 80_000);
+  assert.equal(C.monthMetrics("2026-09").expensePending, 20_000);
+});
+
+test("importar CSV duas vezes não duplica fatura nem descarta compras idênticas legítimas", async () => {
+  const { C, calls } = engine();
+  C.S.data.cards = [{ id: "card", name: "Cartão" }];
+  const file = { text: async () => "data;descricao;valor\n08/08/2026;Mercado;25,00\n08/08/2026;Mercado;25,00\n09/08/2026;Farmácia;10,00" };
+  assert.equal(await C.importInvoice("card", "2026-09-10", file), 3);
+  const batch = calls.find((x) => x.command === "upsert_entities").args.inputs;
+  assert.equal(new Set(batch.map((x) => x.id)).size, 3);
+  C.S.data.transactions = batch.map((x) => ({ id: x.id, ...x.data }));
+  assert.equal(C.invoiceGroups()[0].amountCents, 6000);
+  assert.equal(await C.importInvoice("card", "2026-09-10", file), 0);
+  assert.equal(calls.filter((x) => x.command === "upsert_entities").length, 1);
+  C.S.data.transactions.push({ id: "p", kind: "card_payment", status: "paid", cardId: "card", invoiceMonth: "2026-09", amountCents: 6000 });
+  await assert.rejects(() => C.importInvoice("card", "2026-09-10", file), /Fatura já paga/);
+});
+
+test("dois pagamentos ativos antigos exigem conciliação explícita, sem apagar linhas", async () => {
+  const { C, calls } = engine();
+  C.S.data.accounts = [{ id: "bank", openingBalanceCents: 100_000 }];
+  C.S.data.cards = [{ id: "card", name: "Cartão", accountId: "bank" }];
+  C.S.data.transactions = [
+    { id: "p", kind: "expense", paymentMethod: "credit_card", cardId: "card", dueDate: "2026-09-10", amountCents: 10_000, status: "paid" },
+    { id: "first", kind: "card_payment", cardId: "card", invoiceMonth: "2026-09", accountId: "bank", date: "2026-09-10", amountCents: 10_000, status: "paid" },
+    { id: "second", kind: "card_payment", cardId: "card", invoiceMonth: "2026-09", accountId: "bank", date: "2026-09-11", amountCents: 10_000, status: "paid" },
+  ];
+  assert.equal(C.invoicePaymentConflicts().length, 1);
+  assert.equal(C.accountBalance("bank"), 80_000);
+  await C.reverseDuplicateInvoicePayment("second", "Duplicado verificado no extrato");
+  const updated = calls.find((x) => x.command === "upsert_entity").args.input;
+  assert.equal(updated.id, "second");
+  C.S.data.transactions[2] = { id: "second", ...updated.data };
+  assert.equal(C.invoicePaymentConflicts().length, 0);
+  assert.equal(C.accountBalance("bank"), 90_000);
+  assert.equal(C.S.data.transactions[2].reversalType, "duplicate_invoice_payment");
+  await assert.rejects(() => C.reverseDuplicateInvoicePayment("first"), /não possui pagamentos ativos duplicados/);
+});
+
+test("pagamento iniciado duas vezes em paralelo é bloqueado antes de gravar em duplicidade", async () => {
+  const { C, calls, window } = engine();
+  C.S.data.accounts = [{ id: "bank", openingBalanceCents: 100_000 }];
+  C.S.data.cards = [{ id: "card", name: "Cartão", accountId: "bank" }];
+  C.S.data.transactions = [{ id: "p", kind: "expense", paymentMethod: "credit_card", cardId: "card", dueDate: "2026-09-10", amountCents: 5000, status: "pending" }];
+  let finish;
+  window.__TAURI__.core.invoke = async (command, args) => {
+    calls.push({ command, args });
+    return new Promise((resolve) => { finish = () => resolve(args.inputs.map((x, i) => ({ id: x.id || `generated-${i}`, data: x.data }))); });
+  };
+  const first = C.settleInvoice("card", "2026-09");
+  await assert.rejects(() => C.settleInvoice("card", "2026-09"), /já está sendo processada/);
+  finish(); await first;
+  assert.equal(calls.filter((x) => x.command === "upsert_entities").length, 1);
+});
