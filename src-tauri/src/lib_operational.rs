@@ -586,7 +586,13 @@ fn upsert_in_transaction(
     {
         let card_id = input.data.get("cardId").and_then(Value::as_str).unwrap_or("");
         let month = input.data.get("invoiceMonth").and_then(Value::as_str).unwrap_or("");
-        if card_id.is_empty() || month.len() != 7 || &month[4..5] != "-" {
+        let month_bytes = month.as_bytes();
+        let valid_month = month_bytes.len() == 7 && month_bytes[4] == b'-'
+            && month_bytes[..4].iter().all(|byte| byte.is_ascii_digit())
+            && month_bytes[5..].iter().all(|byte| byte.is_ascii_digit())
+            && month_bytes[5..].iter().fold(0u32, |value, byte| value * 10 + u32::from(byte - b'0')) <= 12
+            && month_bytes[5..].iter().fold(0u32, |value, byte| value * 10 + u32::from(byte - b'0')) >= 1;
+        if card_id.is_empty() || !valid_month {
             return Err("pagamento de fatura sem cartão ou competência válida".to_string());
         }
         let current_id = input.id.as_deref().unwrap_or("");
